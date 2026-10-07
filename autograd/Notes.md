@@ -4,7 +4,8 @@ Notes on what I have built so far, and what comes next.
 
 | File | What it is |
 | --- | --- |
-| `nn.py` | The `Value` class, plus `Neuron`, `Layer` and `MLP` |
+| `engine.py` | The `Value` class: the autograd engine |
+| `nn.py` | `Neuron`, `Layer` and `MLP`, built on `Value` |
 | `test_value.py` | Tests that compare my gradients against PyTorch |
 | `train.py` | Trains an MLP on the two-moons dataset |
 | `plot_activations.py`, `draw_graph.py`, `draw_network.py` | Pictures of the activations, the computational graph and the network |
@@ -184,13 +185,12 @@ Run all of these from inside the `autograd` folder with the venv active.
 
 ## Next steps
 
-Done: `__rtruediv__`, the PyTorch tests, `Neuron` / `Layer` / `MLP`, and a first training run on `make_moons`.
+Done: `__rtruediv__`, the PyTorch tests, `Neuron` / `Layer` / `MLP`, a first training run on `make_moons`, and moving `Value` into `engine.py`.
 
 Still to do:
 
 1. Get the two-moons accuracy from 94% to 100% (see the ideas under Training).
 2. Add the `5 / a` test to `test_value.py`.
-3. Move `Value` into `engine.py`, keeping `nn.py` for the network classes. `engine.py` is still empty.
-4. Draw the network before and after training with `draw_network(model)` to see how the weights change.
+3. Draw the network before and after training with `draw_network(model)` to see how the weights change.
 
 **Always remember:** zero every grad before each `backward()`. Because of `+=`, gradients from earlier steps pile up otherwise.

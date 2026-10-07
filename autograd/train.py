@@ -43,7 +43,7 @@ def loss_and_accuracy():
 
 
 # the training loop
-steps = 200
+steps = 300
 losses = []
 for step in range(steps):
     # forward pass
@@ -54,7 +54,7 @@ for step in range(steps):
     loss.backward()
 
     # update: nudge every parameter a small step against its gradient
-    lr = 0.02 - 0.01 * step / steps   # start at 0.05 and shrink towards 0.02
+    lr = 0.02 - 0.001 * step / steps   # start at 0.05 and shrink towards 0.02
     for p in model.parameters():
         p.data -= lr * p.grad
 

@@ -1,7 +1,7 @@
 
 # Draw the computational graph behind a Value, with each node's data and gradient
 import matplotlib.pyplot as plt
-from nn import Value
+from engine import Value
 
 
 def trace(root):

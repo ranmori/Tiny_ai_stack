@@ -2,7 +2,7 @@
 # Check the Value class against PyTorch: same expression, same data, same gradients
 import pytest
 import torch
-from nn import Value
+from engine import Value
 
 
 def check(expression, *inputs):

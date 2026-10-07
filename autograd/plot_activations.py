@@ -1,7 +1,7 @@
 
 # Plot activation functions and their gradients
 import matplotlib.pyplot as plt
-from nn import Value
+from engine import Value
 
 # Define the range of input values
 xs = [i / 20 for i in range(-120, 121)]   # -6.0 to 6.0
