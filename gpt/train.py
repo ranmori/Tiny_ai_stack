@@ -1,7 +1,7 @@
 
 
-from model import BigramLanguageModel
-from plots import plot_training
+from model import AttentionLanguageModel
+from plots import plot_attention_training
 
 with open("gpt/data/input.txt", "r", encoding="utf-8") as file:
     text = file.read()
@@ -114,10 +114,28 @@ print(xb) # our input to the transformer
 
 
 
-m = BigramLanguageModel(vocab_size)
+# how many numbers describe each character inside the model
+n_embd = 32
+# how many attention heads work side by side, n_embd has to divide evenly by it
+n_head = 4
+
+m = AttentionLanguageModel(vocab_size, n_embd, block_size, n_head)
 logits, loss = m(xb, yb)
 print(logits.shape)
 print(loss)
+
+# for the plots: one fixed chunk of text, to watch who listens to whom before and after training
+example = train_data[:block_size]
+print('example chunk:', repr(decode(example.tolist())))
+
+# run the example through the model and return the attention weights each head used, one (T, T) grid per head
+@torch.no_grad()
+def attention_weights():
+    # unsqueeze(0) adds a batch dimension in front, (T) -> (1, T), because the model expects a batch
+    m(example.unsqueeze(0))
+    return [h.wei[0].clone() for h in m.sa_heads.heads]
+
+wei_before = attention_weights()
 
 # what the model writes before any training: random characters
 # the starting context is one newline character (index 0)
@@ -134,9 +152,6 @@ print(decode(m.generate(idx = context, max_new_tokens=500)[0].tolist()))
 # so every weight gets its own adaptive step size.
 optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)
 
-# for the plots: a copy of the lookup table before training, as probabilities
-# softmax turns each row of logits into probabilities that add up to 1
-table_before = torch.softmax(m.token_embedding_table.weight, dim=-1).detach().clone()
 # for the plots: the loss at every step
 losses = []
 
@@ -211,9 +226,11 @@ print(decode(m.generate(idx = context, max_new_tokens=500)[0].tolist()))
 # save the trained model so generate.py can use it without training again
 # state_dict is every trained number in the model, char is needed to rebuild the same decode
 # this goes before the plots because the plot window blocks the script until it is closed
-torch.save({'model_state_dict': m.state_dict(), 'char': char}, 'gpt/bigram.pt')
+torch.save({'model_state_dict': m.state_dict(), 'char': char}, 'gpt/attention.pt')
 
 
 # plot the results, the drawing itself lives in plots.py
-table_after = torch.softmax(m.token_embedding_table.weight, dim=-1).detach()
-plot_training(losses, table_before, table_after, char, eval_steps, eval_train, eval_val)
+# the loss with the bigram's val loss as the line to beat, and the attention weights before and after training
+wei_after = attention_weights()
+plot_attention_training(losses, vocab_size, eval_steps, eval_train, eval_val,
+                        wei_before, wei_after, decode(example.tolist()), baseline=2.50)
