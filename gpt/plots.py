@@ -85,24 +85,68 @@ def plot_attention(wei_average, wei_attention):
 
 
 def plot_attention_training(losses, vocab_size, eval_steps, eval_train, eval_val, wei_before, wei_after, example, baseline=None):
-    # for the attention model (model.py)
-    # wei_before, wei_after: one (T, T) grid of attention weights per head, for one example chunk, before and after training
+    # for the full model (model.py), it opens two windows
+    # wei_before, wei_after: the attention weights for one example chunk, before and after training
+    #   a list with one entry per block, each entry a list with one (T, T) grid per head
     # example: the characters of that chunk, used to label the rows and columns
     # baseline: the val loss of the bigram, drawn as a line to beat
-    n_head = len(wei_before)
-    fig = plt.figure(figsize=(7 + 4.6 * n_head, 10))
-    # 2 rows: the loss takes the left side over both rows, then one column per head
-    grid = fig.add_gridspec(2, 1 + n_head, width_ratios=[1.6] + [1] * n_head)
-
-    # left: the loss
-    draw_loss(fig.add_subplot(grid[:, 0]), losses, vocab_size, eval_steps, eval_train, eval_val, baseline)
-
-    # right: who listens to whom in the example chunk, top row before training, bottom row after
+    n_layer = len(wei_after)
+    n_head = len(wei_after[0])
     labels = ['\\n' if ch == '\n' else '_' if ch == ' ' else ch for ch in example]
     shown = ''.join(labels)
-    for h in range(n_head):
-        draw_weights(fig.add_subplot(grid[0, 1 + h]), wei_before[h], f'head {h + 1} on "{shown}" before training', labels)
-        draw_weights(fig.add_subplot(grid[1, 1 + h]), wei_after[h], f'head {h + 1} on "{shown}" after training', labels)
+
+    # window 1: the attention before training, one row per block and one column per head
+    fig = plt.figure('before training', figsize=(4.2 * n_head, 4 * n_layer))
+    grid = fig.add_gridspec(n_layer, n_head)
+    for b in range(n_layer):
+        for h in range(n_head):
+            draw_weights(fig.add_subplot(grid[b, h]), wei_before[b][h], f'block {b + 1} head {h + 1} on "{shown}" before training', labels)
+    fig.tight_layout()
+
+    # window 2: the loss on the left over all the rows, then the attention after training
+    fig = plt.figure('after training', figsize=(7 + 4.2 * n_head, 4 * n_layer))
+    grid = fig.add_gridspec(n_layer, 1 + n_head, width_ratios=[1.6] + [1] * n_head)
+    draw_loss(fig.add_subplot(grid[:, 0]), losses, vocab_size, eval_steps, eval_train, eval_val, baseline)
+    for b in range(n_layer):
+        for h in range(n_head):
+            draw_weights(fig.add_subplot(grid[b, 1 + h]), wei_after[b][h], f'block {b + 1} head {h + 1} on "{shown}" after training', labels)
+    fig.tight_layout()
+
+    plt.show()
+
+
+def plot_comparison(results):
+    # for compare.py
+    # results: one entry per model, with its name, its number of parameters,
+    # the steps where the loss was estimated, and the train and val loss at each of those steps
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(17, 6.5))
+
+    # left: the val loss of every model over the training steps
+    for r in results:
+        ax1.plot(r['steps'], r['val'], 'o-', markersize=3, label=r['name'])
+    ax1.set_title('val loss while training, one more piece switched on in each model')
+    ax1.set_xlabel('step')
+    ax1.set_ylabel('cross entropy')
+    # the first estimate is the untrained model at about 4.2, cut it off so the differences at the end are visible
+    lowest = min(min(r['val']) for r in results)
+    ax1.set_ylim(lowest - 0.05, lowest + 0.6)
+    ax1.legend()
+
+    # right: the final train and val loss of every model side by side
+    # a val bar much taller than its train bar means the model is memorizing (overfitting)
+    width = 0.38
+    xs = range(len(results))
+    train_bars = ax2.bar([x - width / 2 for x in xs], [r['train'][-1] for r in results], width, color='tab:green', label='final train loss')
+    val_bars = ax2.bar([x + width / 2 for x in xs], [r['val'][-1] for r in results], width, color='tab:red', label='final val loss')
+    # write the number on top of every bar
+    ax2.bar_label(train_bars, fmt='%.2f', fontsize=8)
+    ax2.bar_label(val_bars, fmt='%.2f', fontsize=8)
+    ax2.set_xticks(xs, [f"{r['name']}\n{r['params']:,} parameters" for r in results], fontsize=8)
+    ax2.set_title('final loss of every model (lower is better)')
+    ax2.set_ylabel('cross entropy')
+    # start the bars near the lowest value so the differences are visible
+    ax2.set_ylim(lowest - 0.3, max(max(r['train'][-1], r['val'][-1]) for r in results) + 0.1)
+    ax2.legend()
 
     plt.tight_layout()
     plt.show()

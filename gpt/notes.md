@@ -5,15 +5,23 @@ Notes on what I have built so far in the `gpt` folder, and what comes next.
 | File | What it is | State |
 | --- | --- | --- |
 | `data/input.txt` | The training text: about 1.1 million characters of Shakespeare | Ready |
-| `train.py` | Loads the text, tokenizes it, makes batches, trains the attention model, estimates the loss, writes text, saves the model, calls the plots | Runs end to end |
-| `model.py` | `Head`, `MultiHeadAttention` and `AttentionLanguageModel` | 4 heads working |
+| `train.py` | Loads the text, tokenizes it, makes batches, trains the full model, estimates the loss, writes text, saves the model, calls the plots | Runs end to end |
+| `model.py` | `Head`, `MultiHeadAttention`, `FeedForward`, `Block` and `GPTLanguageModel` | A complete small GPT |
+| `compare.py` | Trains six models, switching on one more piece each time, and plots what each piece adds | Done |
+| `generate.py` | Loads the model saved by `train.py` and writes text without retraining | Updated for the full model |
 | `bigram.py` | `BigramLanguageModel`, the baseline to beat | Done, kept for reference |
 | `plots.py` | One plot function per stage, plus two shared helpers | Done |
 | `attention.py` | Scratch file for learning attention, no model in it | Steps 1 and 2 done |
-| `generate.py` | Will load saved weights and write text without retraining | Commented out and out of date |
-| `attention.pt`, `bigram.pt` | Trained models saved by `train.py` | Not on GitHub, `*.pt` is in `.gitignore` |
+| `gpt.pt`, `attention.pt`, `bigram.pt` | Trained models saved by `train.py` at each stage | Not on GitHub, `*.pt` is in `.gitignore` |
 
-Run from the project root: `python gpt/train.py`. The plot window opens when training finishes. The scratch file runs with `python gpt/attention.py`.
+All of these run from the project root:
+
+| Command | What happens | How long |
+| --- | --- | --- |
+| `python gpt/train.py` | Trains the full model, then opens two plot windows | About 20 minutes |
+| `python gpt/compare.py` | Trains six models, then opens the comparison plot | About 15 minutes |
+| `python gpt/generate.py` | Writes 500 characters with the saved model | Seconds |
+| `python gpt/attention.py` | The scratch file and its plot | Seconds |
 
 ## The big idea
 
@@ -193,13 +201,14 @@ for steps in range(10000):
 
 The lookup table panels only make sense for the bigram, whose whole model is one table. The attention model has its own plot, described further down.
 
-`plots.py` now has three plot functions and two helpers they share:
+`plots.py` now has four plot functions and two helpers they share:
 
 | Function | Used by | What it draws |
 | --- | --- | --- |
 | `plot_training` | The bigram stage | Loss, and the lookup table before and after |
 | `plot_attention` | `attention.py` | The even average next to one attention grid |
-| `plot_attention_training` | `train.py` now | Loss, and every head's weights before and after |
+| `plot_attention_training` | `train.py` now | Two windows: every block's and head's weights before training, and the loss next to the same grids after training |
+| `plot_comparison` | `compare.py` | The validation loss of six models while training, and their final train and val loss as bars |
 | `draw_loss` | Helper | The loss panel, with an optional baseline line |
 | `draw_weights` | Helper | One grid of attention weights with the numbers written in |
 
@@ -351,7 +360,7 @@ It is called **self**-attention because the queries, keys and values all come fr
 - **`register_buffer('tril', ...)`** stores the triangle on the module without making it a trainable parameter. The optimizer never touches it.
 - **`self.tril[:T, :T]`** cuts the triangle down to the current length, because while generating the context can be shorter than `block_size`.
 
-`AttentionLanguageModel` is the bigram with four changes:
+The model (called `AttentionLanguageModel` at this stage, now `GPTLanguageModel`) is the bigram with four changes:
 
 | Change | Why |
 | --- | --- |
@@ -428,6 +437,202 @@ Tut din or shallk?
 
 Real short words now appear (`the`, `that`, `be`, `or`, `More`).
 
+## The five pieces that make it a transformer (`model.py`)
+
+Multi-head attention is the core, but five more pieces turn it into the real thing. The data flows like this:
+
+```text
+characters
+  -> token embedding + position embedding
+  -> Block 1 -> Block 2 -> Block 3
+  -> final layer norm
+  -> lm_head
+  -> logits (65 scores for the next character)
+```
+
+and inside every block:
+
+```python
+x = x + self.sa(self.ln1(x))     # talk: layer norm, attention, added on top of x
+x = x + self.ffwd(self.ln2(x))   # think: layer norm, feed forward, added on top of x
+```
+
+### Piece 1: the feed-forward layer
+
+Attention is the positions talking to each other and gathering information. Feed-forward is each position thinking by itself about what it gathered.
+
+```python
+self.net = nn.Sequential(
+    nn.Linear(n_embd, 4 * n_embd),   # grow to 4 times the size
+    nn.ReLU(),                       # the activation
+    nn.Linear(4 * n_embd, n_embd),   # shrink back
+    nn.Dropout(dropout),
+)
+```
+
+- It is the same kind of MLP as in the autograd folder: linear, activation, linear.
+- It is applied to every position separately. Positions do not see each other here.
+- The middle is 4 times wider to give it room to work, then it shrinks back so the output has the same size as the input.
+- `nn.Sequential` runs layers one after another.
+
+### Piece 2: blocks
+
+A `Block` is one round of "talk, then think": multi-head attention followed by feed-forward. Blocks are stacked (`n_layer = 3`), so later blocks work with what earlier blocks figured out.
+
+```python
+self.blocks = nn.Sequential(*[Block(...) for _ in range(n_layer)])
+```
+
+The `*` unpacks the list, because `nn.Sequential` wants the blocks as separate arguments.
+
+### Piece 3: residual connections
+
+A block does not replace `x`. It adds a correction on top of it: `x = x + ...`.
+
+- `+` passes the gradient straight through, exactly as in my autograd engine, where `__add__` hands `out.grad` to both inputs unchanged.
+- So during `backward()` even the first block gets a clear signal. Without this, a stack of blocks trains badly.
+- It also means every block starts from the full information and only has to learn what to add.
+
+`MultiHeadAttention` gained a `proj` linear layer for this. It mixes what the separate heads found before the result is added back onto `x`.
+
+### Piece 4: layer norm
+
+`nn.LayerNorm(n_embd)` rescales the 32 numbers of each position so they have mean 0 and spread 1. It has two small sets of trainable numbers, so the model can undo it where it wants to.
+
+- It is applied before attention and before feed-forward in every block, plus once at the very end (`ln_f`).
+- The numbers stay in a steady range however deep the stack is, which keeps training stable.
+
+### Piece 5: dropout
+
+`nn.Dropout(0.2)` sets a random 20% of the numbers passing through it to zero, a different set on every step, and only while training.
+
+- The model cannot rely on any single path, so it memorizes less. It is a tool against overfitting.
+- It sits in three places: on the attention weights, after `proj`, and at the end of feed-forward.
+- **`m.eval()` switches it off and `m.train()` switches it back on.** This is why `estimate_loss()`, the text generation and the attention plot all call `m.eval()` first. Measuring or writing with dropout on would use a damaged model.
+- A visible side effect in the loss plot: the per-batch training loss (dropout on) sits above the estimated train loss (dropout off).
+
+### The switches
+
+`Block` and `GPTLanguageModel` take `feed_forward`, `residual` and `layer_norm` arguments that default to `True`. `train.py` never touches them. They exist so that `compare.py` can switch pieces off and measure what each one adds.
+
+## Results: what each piece adds (`compare.py`)
+
+Six models, each with one more piece switched on than the one before. 5,000 steps each, same seed, batch size 32, `block_size` 8, `n_embd` 32, 4 heads.
+
+| Model | Parameters | Train loss | Val loss | Gap |
+| --- | --- | --- | --- | --- |
+| 4 heads only | 8,609 | 2.24 | 2.28 | 0.04 |
+| + feed forward | 16,961 | 2.16 | 2.17 | 0.01 |
+| + 3 stacked blocks | 41,921 | 2.24 | 2.28 | 0.04 |
+| + residual | 41,921 | 1.99 | 2.09 | 0.10 |
+| + layer norm | 42,369 | 1.98 | 2.07 | 0.09 |
+| + dropout 0.2 | 42,369 | 2.08 | 2.14 | 0.05 |
+
+What the comparison shows:
+
+- **Feed-forward helps** (2.28 to 2.17). Giving each position a chance to think is worth about 0.11.
+- **Stacking blocks without residual connections makes things worse** (2.17 back up to 2.28), even though the model has more than twice the parameters. It also learns slowest of all at the start. A deeper model is harder to train, and this is the problem residual connections exist to solve.
+- **Residual connections are the biggest single win** (2.28 to 2.09) with zero extra parameters. The same three blocks suddenly train well.
+- **Layer norm helps a little** (2.09 to 2.07). At three blocks the model is not deep enough to need it much.
+- **Dropout makes the loss worse at this size** (2.07 to 2.14), but it nearly halves the gap between train and validation (0.09 to 0.05). That is dropout doing its job: less memorizing. This model is too small to overfit badly, so the cost outweighs the benefit. Dropout pays off on bigger models and longer training.
+- **More parameters is not the same as better.** Models 3 and 4 have exactly the same parameters and differ by 0.19.
+
+The plot from `compare.py` has the six validation curves on the left and the final train and val loss of each model as bars on the right.
+
+## Results: the full model
+
+`train.py` with everything on: 3 blocks, 4 heads, `n_embd` 32, `block_size` 8, dropout 0.2, 10,000 steps. 42,369 parameters.
+
+| Model | Train loss | Val loss |
+| --- | --- | --- |
+| Bigram | 2.47 | 2.50 |
+| One head | 2.35 | 2.39 |
+| Four heads | 2.16 | 2.22 |
+| Full model | 2.01 | 2.06 |
+
+The loss was still falling at step 10,000.
+
+Text from the full model:
+
+```text
+LING RICHAGYST:
+The seak ary, sir you doth slecome.
+
+FORCARIO:
+Whind is lool hand nout for esor pake of have
+st what Claze quicarss.
+```
+
+It now writes in the shape of a play: a name in capitals with a colon, then lines of speech with real words (`sir`, `you`, `doth`, `hand`, `for`, `of`, `have`, `what`).
+
+### What the attention looks like with three blocks
+
+The plot has one row per block and one column per head, on the chunk `First Ci`.
+
+- **Block 1 mostly looks at the character just before.** In head 1 nearly all the weight sits one step left of the diagonal (0.90 to 1.00), and head 2 does mostly the same. With residual connections the current character is already in `x`, so attention no longer has to spend its budget on it.
+- **Blocks 2 and 3 are more spread out.** They look two or three characters back, at the start of the word, or at the space. They are working with what block 1 already gathered.
+- **Before training** all twelve grids are meaningless smears.
+
+## Scaling up
+
+The model works, but it is tiny and only sees 8 characters at a time. To make it bigger without guessing, I changed one setting at a time and trained each version for 5,000 steps. All runs used the same seed, batch size 32, 4 heads, learning rate 0.001 and no dropout unless the table says otherwise.
+
+This machine has no GPU, so every run is on the CPU. That is why I measured the time per step before anything else.
+
+| Model | Parameters | Train loss | Val loss | Gap |
+| --- | --- | --- | --- | --- |
+| Context 8, size 32, 3 blocks (the old settings) | 42,369 | 1.97 | 2.06 | 0.08 |
+| Context 32 | 43,137 | 1.84 | 1.96 | 0.13 |
+| Context 32, size 64 | 159,937 | 1.62 | 1.77 | 0.15 |
+| Context 32, size 64, 4 blocks | 209,729 | 1.58 | 1.77 | 0.19 |
+| The same, learning rate 3e-4 | 209,729 | 1.74 | 1.89 | 0.15 |
+| Context 32, size 64, dropout 0.1 | 159,937 | 1.69 | 1.84 | 0.15 |
+| Context 32, size 64, dropout 0.2 | 159,937 | 1.74 | 1.89 | 0.15 |
+| **Context 64, size 64** | 161,985 | 1.55 | **1.73** | 0.18 |
+
+"Context" is `block_size` and "size" is `n_embd`.
+
+What it shows:
+
+- **A longer context helps** (2.06 to 1.96 at size 32, and 1.77 to 1.73 at size 64). Seeing more characters gives attention more to work with. It costs almost no parameters, only a bigger position table, but every step is slower because attention compares every pair of positions.
+- **A bigger `n_embd` is the biggest win** (1.96 to 1.77). Four times the parameters, but each step is only a little slower.
+- **A 4th block is not worth it** (1.773 to 1.768). It costs 30% more time per step for almost nothing.
+- **The lower learning rate 3e-4 is worse** at 5,000 steps (1.89 against 1.77). It learns more carefully but too slowly for a run this short. It would make sense for a much longer run, so 0.001 stays.
+- **Dropout still makes it worse** (1.77 to 1.84 to 1.89), and this time it does not even close the gap: the gap stays 0.15 with or without it. The model is still too small and trained too briefly to memorize much, so there is nothing for dropout to fix yet. It stays at 0.
+- **The gap between train and val is growing** with size (0.08 to 0.18). Something to keep watching if the model gets bigger.
+
+On this CPU one training step takes about 60 ms with the old settings, 100 ms with context 32 and size 64, and 150 ms with context 64 and size 64.
+
+`train.py` now uses context 64, size 64, 3 blocks, 4 heads, no dropout, 10,000 steps. 161,985 parameters, and it trains in about 20 minutes.
+
+| Model | Train loss | Val loss |
+| --- | --- | --- |
+| Bigram | 2.47 | 2.50 |
+| Full model, old settings | 2.01 | 2.06 |
+| Full model, scaled up | 1.46 | 1.66 |
+
+The val loss was still falling slowly at the end (1.69 at step 7,000, 1.66 at step 10,000). The gap between train and val grew to 0.20, right at the point where dropout might start to pay off.
+
+Text from the scaled-up model:
+
+```text
+ANGEenes, you are out, in very too:
+Farewell, unscul the mystenge there,
+But wherefore must despile of the gaught,
+Which flore-way upon upon the stam,
+
+POMPEY:
+I had, you his device did know his fear'd lead,
+Meach you weldst it the duned lord! thou rash Orace.
+
+CLIFFORD:
+Hence M
+```
+
+Whole lines now almost scan as English (`Farewell`, `But wherefore must`, `I thought by how much`), and names from the plays appear (Pompey, Clifford).
+
+The first part of `train.py` still uses a context of 8 for the printed examples, and the attention plot uses only the first 8 characters, because a 64 by 64 grid with the numbers written in would be unreadable.
+
 ## Mistakes I made and fixed
 
 - **`train.py` read itself.** It opened `"gpt/train.py"` instead of `"gpt/data/input.txt"`. It was easy to miss because the script happened to contain exactly 65 unique characters too, so `vocab_size` printed 65 either way. The giveaway was the length: about 3,000 characters instead of 1,115,393.
@@ -436,19 +641,18 @@ Real short words now appear (`the`, `that`, `be`, `or`, `More`).
 - **Printing the loss on every step** flooded the terminal. It now prints only when `steps % 1000 == 0`.
 - **Stray text typed into the code.** The word `do` ended up after the colon in `if steps % 1000 == 0:`, which gave `IndentationError: unexpected indent` on the next line. The error points at the line after the real mistake.
 
+- **`data.type` without brackets** printed the method itself, not the type. It is now `data.dtype`.
+
 ## Still to fix
 
-- **`data.type` without brackets** prints the method itself, not the type. Use `data.dtype`.
-- **`generate.py` is commented out and out of date.** It imports `BigramLanguageModel` from `model`, which no longer has that class. For the bigram, import it from `bigram` and keep loading `gpt/bigram.pt`. For the attention model it needs `AttentionLanguageModel`, the same `n_embd`, `block_size` and `n_head` as training, and `gpt/attention.pt`.
 - **The bigram line in the plot is a fixed number.** `baseline=2.50` is typed in at the bottom of `train.py`, not measured each run.
-- **A stale comment in `estimate_loss()`** still says "none in the bigram yet".
+- **`generate.py` only works with the full model now.** `train.py` saves the settings (`n_embd`, `block_size`, `n_head`, `n_layer`, `dropout`) inside `gpt/gpt.pt`, and `generate.py` rebuilds the model from them. To generate from the old bigram instead, import `BigramLanguageModel` from `bigram` and load `gpt/bigram.pt`.
 
 ## Next steps
 
-Done: the bigram baseline, attention steps 1 to 4 (the scratch file, one head in the model, four heads), and the attention plot.
+Done: the bigram baseline, attention, all five transformer pieces, and a first round of scaling up (see "Scaling up").
 
-1. Add a feed-forward layer after the heads: a small MLP applied to every position by itself. Attention lets positions gather information; this gives each one a chance to think about what it gathered.
-2. Wrap attention and feed-forward into a `Block`, and stack several blocks.
-3. Add residual connections and layer norm, which make a deeper model trainable.
-4. Add dropout to fight overfitting.
-5. Scale up: larger `block_size`, `n_embd` and more layers. The full small transformer should reach a validation loss of roughly 1.5.
+1. A validation loss of roughly 1.5 is where the text starts to read like Shakespeare. The next sizes to try are `n_embd` 128 or a context of 128, but each is several times slower per step on this CPU.
+2. Speed up attention. The heads run one after another in a Python loop. Doing all heads in one batched matrix multiply would make every step faster, which makes bigger models practical here.
+3. Try dropout again. The scaled-up model's train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
+4. Move training to a GPU (for example a free Kaggle notebook) for the bigger sizes. The code needs a `device` setting first, so the model, the batches and the `torch.arange(T)` in `model.py` all live on the GPU.

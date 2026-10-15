@@ -1,6 +1,6 @@
 
 
-from model import AttentionLanguageModel
+from model import GPTLanguageModel
 from plots import plot_attention_training
 
 with open("gpt/data/input.txt", "r", encoding="utf-8") as file:
@@ -50,7 +50,7 @@ print(decode(encode("hii there")))
 
 import torch 
 data= torch.tensor(encode(text), dtype= torch.long)
-print(data.shape, data.type)
+print(data.shape, data.dtype)
 print(data[:1000])
 
 
@@ -114,26 +114,41 @@ print(xb) # our input to the transformer
 
 
 
+# the model sizes, picked by measuring one change at a time (see "Scaling up" in notes.md)
+# the examples above used a context of 8 to keep the printing short, the model sees 64 characters at once
+block_size = 64
 # how many numbers describe each character inside the model
-n_embd = 32
+n_embd = 64
 # how many attention heads work side by side, n_embd has to divide evenly by it
 n_head = 4
+# how many blocks (attention then feed forward) are stacked on top of each other, a 4th one barely helped
+n_layer = 3
+# the share of numbers that dropout sets to zero while training, 0.2 is 20%
+# switched off: at this size and number of steps it made the loss worse without closing the train/val gap
+dropout = 0.0
 
-m = AttentionLanguageModel(vocab_size, n_embd, block_size, n_head)
+m = GPTLanguageModel(vocab_size, n_embd, block_size, n_head, n_layer, dropout)
+# numel is the number of elements in a tensor, summed over every parameter it is the size of the model
+print('number of parameters:', sum(p.numel() for p in m.parameters()))
 logits, loss = m(xb, yb)
 print(logits.shape)
 print(loss)
 
 # for the plots: one fixed chunk of text, to watch who listens to whom before and after training
-example = train_data[:block_size]
+# only the first 8 characters, a 64 by 64 grid with the numbers written in would be unreadable
+example = train_data[:8]
 print('example chunk:', repr(decode(example.tolist())))
 
-# run the example through the model and return the attention weights each head used, one (T, T) grid per head
+# run the example through the model and return the attention weights every head used
+# a list with one entry per block, each entry a list with one (T, T) grid per head
 @torch.no_grad()
 def attention_weights():
+    # eval mode so dropout is switched off while looking
+    m.eval()
     # unsqueeze(0) adds a batch dimension in front, (T) -> (1, T), because the model expects a batch
     m(example.unsqueeze(0))
-    return [h.wei[0].clone() for h in m.sa_heads.heads]
+    m.train()
+    return [[h.wei[0].clone() for h in block.sa.heads] for block in m.blocks]
 
 wei_before = attention_weights()
 
@@ -141,7 +156,10 @@ wei_before = attention_weights()
 # the starting context is one newline character (index 0)
 context = torch.zeros((1, 1), dtype=torch.long)
 print('----- text before training -----')
+# eval mode so dropout is switched off while writing, then back to train mode
+m.eval()
 print(decode(m.generate(idx = context, max_new_tokens=500)[0].tolist()))
+m.train()
 
 # optimizer
 # create a PyTorch optimizer
@@ -168,7 +186,8 @@ eval_iters = 200
 @torch.no_grad()
 def estimate_loss():
     out = {}
-    # eval mode: some layers behave differently when measuring than when training (none in the bigram yet)
+    # eval mode: some layers behave differently when measuring than when training
+    # dropout is switched off here, so the loss is measured with the whole model
     m.eval()
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
@@ -221,16 +240,21 @@ eval_val.append(est['val'])
 
 # what the model writes after training, from the same starting context
 print('----- text after training -----')
+m.eval()
 print(decode(m.generate(idx = context, max_new_tokens=500)[0].tolist()))
+m.train()
 
 # save the trained model so generate.py can use it without training again
 # state_dict is every trained number in the model, char is needed to rebuild the same decode
 # this goes before the plots because the plot window blocks the script until it is closed
-torch.save({'model_state_dict': m.state_dict(), 'char': char}, 'gpt/attention.pt')
+# settings are saved too, generate.py has to rebuild a model of exactly the same shape before it can load the numbers
+settings = {'n_embd': n_embd, 'block_size': block_size, 'n_head': n_head, 'n_layer': n_layer, 'dropout': dropout}
+torch.save({'model_state_dict': m.state_dict(), 'char': char, 'settings': settings}, 'gpt/gpt.pt')
 
 
 # plot the results, the drawing itself lives in plots.py
-# the loss with the bigram's val loss as the line to beat, and the attention weights before and after training
+# two windows: the attention weights of every block and head before training,
+# and the loss (with the bigram's val loss as the line to beat) next to the attention weights after training
 wei_after = attention_weights()
 plot_attention_training(losses, vocab_size, eval_steps, eval_train, eval_val,
                         wei_before, wei_after, decode(example.tolist()), baseline=2.50)
