@@ -633,6 +633,64 @@ Whole lines now almost scan as English (`Farewell`, `But wherefore must`, `I tho
 
 The first part of `train.py` still uses a context of 8 for the printed examples, and the attention plot uses only the first 8 characters, because a 64 by 64 grid with the numbers written in would be unreadable.
 
+## Training on a GPU (Kaggle)
+
+The next size up is too slow for this CPU, so it trains on a free GPU instead. Kaggle gives about 30 hours of GPU time a week.
+
+### What changed in the code
+
+A **device** is where the numbers live and the math runs: `'cuda'` is a GPU, `'cpu'` is the processor. A tensor on the GPU and a tensor on the CPU cannot be used in the same calculation, so everything has to be moved to the same place.
+
+| Where | Change |
+| --- | --- |
+| `train.py` | `device = 'cuda' if torch.cuda.is_available() else 'cpu'` |
+| `train.py` | `m = m.to(device)` moves every parameter of the model |
+| `train.py` | `get_batch` returns `x.to(device), y.to(device)` |
+| `train.py` | The example chunk and the starting context are made on the device |
+| `train.py` | The attention weights come back with `.cpu()`, because matplotlib only works with numbers on the CPU |
+| `model.py` | `torch.arange(T, device=idx.device)` makes the positions on the same device as the input |
+| `generate.py` | `torch.load(..., map_location='cpu')` so a model trained on the GPU also loads on this laptop |
+
+The same `train.py` runs in both places. On the CPU it uses the settings from "Scaling up". On a GPU it switches to the size from the original tutorial:
+
+| Setting | CPU | GPU |
+| --- | --- | --- |
+| `block_size` | 64 | 256 |
+| `n_embd` | 64 | 384 |
+| `n_head` | 4 | 6 |
+| `n_layer` | 3 | 6 |
+| `dropout` | 0 | 0.2 |
+| Batch size | 32 | 64 |
+| Learning rate | 1e-3 | 3e-4 |
+| Steps | 10,000 | 5,000 |
+| Parameters | 161,985 | about 10.8 million |
+
+The tutorial reached a val loss of about 1.48 with these settings.
+
+### How to run it
+
+1. On kaggle.com: **Create, New Notebook**.
+2. In the right panel, **Session options, Accelerator**: pick **GPU T4 x2** or **GPU P100**. The phone number on the account has to be verified first.
+3. In the same panel, switch **Internet on**, so the notebook can download the code.
+4. In the first cell:
+
+```python
+!git clone https://github.com/ranmori/Tiny_ai_stack.git
+%cd Tiny_ai_stack
+import sys
+sys.path.insert(0, 'gpt')
+%run gpt/train.py
+```
+
+- `%cd` moves into the repo, because `train.py` opens `gpt/data/input.txt` from there.
+- `sys.path.insert` lets `from model import ...` find the files in `gpt`.
+- `%run` runs the script inside the notebook, so the plots appear under the cell.
+- It should print `device: cuda`. If it says `cpu`, the accelerator is not switched on.
+
+When it finishes, `gpt.pt` is in the file panel under `/kaggle/working/Tiny_ai_stack/gpt/`. Download it and put it in this laptop's `gpt` folder, and `python gpt/generate.py` writes with it.
+
+After a code change here, push it to GitHub. The notebook clones the code fresh, so a new session gets the latest version.
+
 ## Mistakes I made and fixed
 
 - **`train.py` read itself.** It opened `"gpt/train.py"` instead of `"gpt/data/input.txt"`. It was easy to miss because the script happened to contain exactly 65 unique characters too, so `vocab_size` printed 65 either way. The giveaway was the length: about 3,000 characters instead of 1,115,393.
@@ -655,4 +713,4 @@ Done: the bigram baseline, attention, all five transformer pieces, and a first r
 1. A validation loss of roughly 1.5 is where the text starts to read like Shakespeare. The next sizes to try are `n_embd` 128 or a context of 128, but each is several times slower per step on this CPU.
 2. Speed up attention. The heads run one after another in a Python loop. Doing all heads in one batched matrix multiply would make every step faster, which makes bigger models practical here.
 3. Try dropout again. The scaled-up model's train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
-4. Move training to a GPU (for example a free Kaggle notebook) for the bigger sizes. The code needs a `device` setting first, so the model, the batches and the `torch.arange(T)` in `model.py` all live on the GPU.
+4. Train the tutorial-size model on Kaggle (see "Training on a GPU") and record its loss and text here.

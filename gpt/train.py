@@ -74,6 +74,11 @@ for t in range(block_size):
 
 # i need the same manual seed every time basially the same random ones
 torch.manual_seed(1337)
+
+# where the numbers live and the math runs: 'cuda' is a GPU (on Kaggle or Colab), otherwise the CPU
+# the model and every batch have to be on the same device
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print('device:', device)
 # let my batch size be and the block be 8
 
 batch_size = 4 # how many independent sequences will we process in parallel?
@@ -88,7 +93,8 @@ def get_batch(split):
     # then pile the data into a 2d tensor stack 
     x = torch.stack([data[i:i+block_size] for i in ix])
     y = torch.stack([data[i+1:i+block_size+1] for i in ix])
-    return x,y 
+    # move the batch to the same device as the model
+    return x.to(device), y.to(device)
 
 
 xb, yb = get_batch('train')
@@ -126,8 +132,31 @@ n_layer = 3
 # the share of numbers that dropout sets to zero while training, 0.2 is 20%
 # switched off: at this size and number of steps it made the loss worse without closing the train/val gap
 dropout = 0.0
+# how many chunks in every training batch
+train_batch_size = 32
+learning_rate = 1e-3
+# how many training steps, and how often to estimate the loss
+max_steps = 10000
+eval_interval = 1000
+
+# on a GPU there is room for a much bigger model, the size from the original tutorial
+# about 10.8 million parameters, far too slow for the CPU
+if device == 'cuda':
+    block_size = 256
+    n_embd = 384
+    n_head = 6
+    n_layer = 6
+    # a model this big memorizes, so dropout is worth it here
+    dropout = 0.2
+    train_batch_size = 64
+    # a bigger model needs smaller, more careful steps
+    learning_rate = 3e-4
+    max_steps = 5000
+    eval_interval = 500
 
 m = GPTLanguageModel(vocab_size, n_embd, block_size, n_head, n_layer, dropout)
+# move every parameter of the model to the device
+m = m.to(device)
 # numel is the number of elements in a tensor, summed over every parameter it is the size of the model
 print('number of parameters:', sum(p.numel() for p in m.parameters()))
 logits, loss = m(xb, yb)
@@ -136,7 +165,7 @@ print(loss)
 
 # for the plots: one fixed chunk of text, to watch who listens to whom before and after training
 # only the first 8 characters, a 64 by 64 grid with the numbers written in would be unreadable
-example = train_data[:8]
+example = train_data[:8].to(device)
 print('example chunk:', repr(decode(example.tolist())))
 
 # run the example through the model and return the attention weights every head used
@@ -148,13 +177,14 @@ def attention_weights():
     # unsqueeze(0) adds a batch dimension in front, (T) -> (1, T), because the model expects a batch
     m(example.unsqueeze(0))
     m.train()
-    return [[h.wei[0].clone() for h in block.sa.heads] for block in m.blocks]
+    # .cpu() brings the weights back from the GPU, the plotting only works with numbers on the CPU
+    return [[h.wei[0].cpu() for h in block.sa.heads] for block in m.blocks]
 
 wei_before = attention_weights()
 
 # what the model writes before any training: random characters
 # the starting context is one newline character (index 0)
-context = torch.zeros((1, 1), dtype=torch.long)
+context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print('----- text before training -----')
 # eval mode so dropout is switched off while writing, then back to train mode
 m.eval()
@@ -168,14 +198,14 @@ m.train()
 # adamW is doing regulariztion
 # AdamW is Adam with decoupled weight decay. Adam keeps a running average of each parameter's gradient and squared gradient, 
 # so every weight gets its own adaptive step size.
-optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)
+optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 
 # for the plots: the loss at every step
 losses = []
 
 
-# each loop is gonna train on 32 batch
-batch_size = 32
+# each loop is gonna train on 32 batch (64 on a GPU)
+batch_size = train_batch_size
 
 # how many batches to average over when estimating the loss
 eval_iters = 200
@@ -206,11 +236,11 @@ eval_steps, eval_train, eval_val = [], [], []
 
 # gradient descent
 #
-for steps in range(10000): # increase number of steps for good results...
+for steps in range(max_steps): # increase number of steps for good results...
 
-    # every 1000 steps measure the loss on train and val
+    # every eval_interval steps measure the loss on train and val
     # if train keeps going down but val goes up the model is memorizing (overfitting)
-    if steps % 1000 == 0:
+    if steps % eval_interval == 0:
         est = estimate_loss()
         print(f"step {steps}: train loss {est['train']:.4f}, val loss {est['val']:.4f}")
         eval_steps.append(steps)

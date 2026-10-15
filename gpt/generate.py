@@ -3,7 +3,8 @@ from model import GPTLanguageModel
 
 #load what train.py saved
 
-checkpoint= torch.load("gpt/gpt.pt")
+# map_location='cpu' so a model trained on a GPU (Kaggle) also loads on a computer without one
+checkpoint= torch.load("gpt/gpt.pt", map_location='cpu')
 char= checkpoint['char']
 itos={i:ch for i,ch in enumerate(char)}
 decode= lambda l: ''.join([itos[i] for i in l ])

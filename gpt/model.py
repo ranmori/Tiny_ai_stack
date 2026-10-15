@@ -159,7 +159,7 @@ class GPTLanguageModel(nn.Module):
         # idx and targets are both (B,T) tensor of integers
         B, T = idx.shape
         tok_emb = self.token_embedding_table(idx) # (B,T,n_embd) what each character is
-        pos_emb = self.position_embedding_table(torch.arange(T)) # (T,n_embd) where each character sits
+        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (T,n_embd) where each character sits
         # add them, pos_emb is broadcast across the batch so every chunk gets the same position vectors
         x = tok_emb + pos_emb # (B,T,n_embd)
         # through every block in turn: gather from the positions before, then think
