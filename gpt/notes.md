@@ -739,6 +739,28 @@ Most words are real now, the lines have the rhythm of verse, and the speakers be
 
 `generate.py` runs this model on the laptop's CPU. It takes about half a minute for 500 characters.
 
+## Early stopping (`train.py`)
+
+The GPU model stopped improving at step 3,500 but trained to 5,000, and the model saved at the end was the overfitted one. `train.py` now keeps the best version instead:
+
+```python
+if est['val'] < best_val:
+    best_val = est['val']
+    best_step = steps
+    best_state = {k: v.clone() for k, v in m.state_dict().items()}
+    save_model(best_state)
+elif steps - best_step >= patience * eval_interval:
+    break
+```
+
+- **Every estimate checks for a new best val loss.** If there is one, the model is copied and saved to `gpt/gpt.pt` straight away. Saving at once means a crash or a Kaggle timeout later still leaves the best model on disk.
+- **`.clone()`** makes a separate copy of every tensor. `state_dict()` on its own gives the model's live numbers, which the next training steps would keep changing.
+- **`patience = 3`**: if 3 estimates in a row bring no new best, training stops. That is 3,000 steps on the CPU and 1,500 on the GPU. One bad estimate is not enough, because the val estimate wobbles by about 0.01 between runs.
+- **After the loop, `m.load_state_dict(best_state)`** puts the best numbers back into the model, so the text and the attention plot at the end come from the same model `generate.py` will load.
+- The loop now runs to `max_steps + 1`, so the last estimate happens inside the loop and can also count as a new best.
+
+Early stopping does not make the model better. It only stops the waste and keeps the right version. To get a lower val loss, the overfitting itself has to shrink, for example with more dropout.
+
 ## Mistakes I made and fixed
 
 - **`train.py` read itself.** It opened `"gpt/train.py"` instead of `"gpt/data/input.txt"`. It was easy to miss because the script happened to contain exactly 65 unique characters too, so `vocab_size` printed 65 either way. The giveaway was the length: about 3,000 characters instead of 1,115,393.
@@ -756,8 +778,8 @@ Most words are real now, the lines have the rhythm of verse, and the speakers be
 
 ## Next steps
 
-Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, and the tutorial-size model on a GPU (val loss 1.49).
+Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.49), and early stopping.
 
-1. Fight the overfitting of the GPU model: stop at the best val loss (early stopping, and save that version of the model), or raise dropout.
+1. Shrink the overfitting of the GPU model: try dropout 0.3 on Kaggle. Early stopping (done) now keeps the best version either way.
 2. Speed up attention. The heads run one after another in a Python loop. Doing all heads in one batched matrix multiply would make every step faster, on the CPU and on the GPU.
 3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.

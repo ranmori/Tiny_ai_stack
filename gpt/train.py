@@ -234,9 +234,25 @@ def estimate_loss():
 # for the plots: the step, train loss and val loss of every estimate
 eval_steps, eval_train, eval_val = [], [], []
 
+# the settings are saved with the model, generate.py has to rebuild a model of exactly the same shape before it can load the numbers
+settings = {'n_embd': n_embd, 'block_size': block_size, 'n_head': n_head, 'n_layer': n_layer, 'dropout': dropout}
+
+# early stopping: keep the version of the model with the lowest val loss, and stop when val stops improving
+# after that point the model only gets better at the training text, it is memorizing (overfitting)
+best_val = float('inf')
+best_step = 0
+# a copy of every trained number at the best val loss
+best_state = None
+# how many estimates in a row without a new best val loss before training stops
+patience = 3
+
+def save_model(state):
+    # state_dict is every trained number in the model, char is needed to rebuild the same decode
+    torch.save({'model_state_dict': state, 'char': char, 'settings': settings}, 'gpt/gpt.pt')
+
 # gradient descent
 #
-for steps in range(max_steps): # increase number of steps for good results...
+for steps in range(max_steps + 1): # increase number of steps for good results...
 
     # every eval_interval steps measure the loss on train and val
     # if train keeps going down but val goes up the model is memorizing (overfitting)
@@ -246,6 +262,22 @@ for steps in range(max_steps): # increase number of steps for good results...
         eval_steps.append(steps)
         eval_train.append(est['train'])
         eval_val.append(est['val'])
+
+        if est['val'] < best_val:
+            best_val = est['val']
+            best_step = steps
+            # clone makes a separate copy, otherwise the next training steps would change it too
+            best_state = {k: v.clone() for k, v in m.state_dict().items()}
+            # save it straight away, so a crash or a Kaggle timeout later still leaves the best model on disk
+            save_model(best_state)
+            print('  new best val loss, saved')
+        elif steps - best_step >= patience * eval_interval:
+            print(f'val loss has not improved for {patience} estimates, stopping')
+            break
+
+    # the last pass of the loop is only there for the final estimate
+    if steps == max_steps:
+        break
 
     # sample a batch of data
     xb, yb = get_batch('train')
@@ -261,26 +293,16 @@ for steps in range(max_steps): # increase number of steps for good results...
 # print the loss .item is making it into a into a plain Python float
 print(loss.item())
 
-# the final loss on train and val after all the steps
-est = estimate_loss()
-print(f"final: train loss {est['train']:.4f}, val loss {est['val']:.4f}")
-eval_steps.append(len(losses))
-eval_train.append(est['train'])
-eval_val.append(est['val'])
+# go back to the best version of the model, the one already saved in gpt/gpt.pt
+# so the text and the attention plot below come from the model that generate.py will use
+m.load_state_dict(best_state)
+print(f'best: val loss {best_val:.4f} at step {best_step}')
 
 # what the model writes after training, from the same starting context
 print('----- text after training -----')
 m.eval()
 print(decode(m.generate(idx = context, max_new_tokens=500)[0].tolist()))
 m.train()
-
-# save the trained model so generate.py can use it without training again
-# state_dict is every trained number in the model, char is needed to rebuild the same decode
-# this goes before the plots because the plot window blocks the script until it is closed
-# settings are saved too, generate.py has to rebuild a model of exactly the same shape before it can load the numbers
-settings = {'n_embd': n_embd, 'block_size': block_size, 'n_head': n_head, 'n_layer': n_layer, 'dropout': dropout}
-torch.save({'model_state_dict': m.state_dict(), 'char': char, 'settings': settings}, 'gpt/gpt.pt')
-
 
 # plot the results, the drawing itself lives in plots.py
 # two windows: the attention weights of every block and head before training,
