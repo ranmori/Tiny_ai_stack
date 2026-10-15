@@ -691,6 +691,54 @@ When it finishes, `gpt.pt` is in the file panel under `/kaggle/working/Tiny_ai_s
 
 After a code change here, push it to GitHub. The notebook clones the code fresh, so a new session gets the latest version.
 
+The browser saves `gpt.pt` as `gpt.zip`, because a `.pt` file is a zip archive inside. Do not unzip it. Rename it to `gpt.pt` and put it in the `gpt` folder. The model trained on this laptop is kept next to it as `gpt_cpu.pt`.
+
+### Results: the GPU model
+
+10,788,929 parameters, 5,000 steps, about 53 minutes on Kaggle (about 0.63 seconds per step).
+
+| Step | Train loss | Val loss |
+| --- | --- | --- |
+| 0 | 4.37 | 4.36 |
+| 1,000 | 1.54 | 1.73 |
+| 2,000 | 1.32 | 1.56 |
+| 3,000 | 1.21 | 1.50 |
+| 3,500 | 1.17 | 1.48 |
+| 4,000 | 1.13 | 1.48 |
+| 4,500 | 1.11 | 1.49 |
+| 5,000 (final) | 1.07 | 1.49 |
+
+| Model | Parameters | Train loss | Val loss |
+| --- | --- | --- | --- |
+| Bigram | 4,225 | 2.47 | 2.50 |
+| Full model, old settings | 42,369 | 2.01 | 2.06 |
+| Full model, scaled up on the CPU | 161,985 | 1.46 | 1.66 |
+| **Full model on the GPU** | 10,788,929 | 1.07 | **1.49** |
+
+- **It reached the tutorial's number** (about 1.48).
+- **This model overfits.** From step 3,500 the val loss stops at 1.48 while the train loss keeps falling, from 1.17 to 1.07. The gap ends at 0.42, much bigger than anything before. The last 1,500 steps only taught it to memorize the training text. Even with dropout 0.2, 10.8 million parameters is a lot for 1 million characters.
+- So 3,500 steps would have given the same model in about two thirds of the time. Stopping when the val loss stops improving is called **early stopping**.
+
+Text from the GPU model:
+
+```text
+GLOUCESTER:
+I would follow you not took in me;
+Let me from heard them be the other.
+
+HASTINGS:
+You that stay thou remember'd your meanest.
+Go you to, xamillo; I am sorry Aumerle,
+My great that you have been to still.
+
+LADY ANNE:
+Go to; mercy joy to look you, for me.
+```
+
+Most words are real now, the lines have the rhythm of verse, and the speakers belong together: Gloucester, Hastings and Lady Anne are all in Richard III. The sentences still do not make sense. A character-level model of this size learns spelling, words and the look of a play, but not meaning.
+
+`generate.py` runs this model on the laptop's CPU. It takes about half a minute for 500 characters.
+
 ## Mistakes I made and fixed
 
 - **`train.py` read itself.** It opened `"gpt/train.py"` instead of `"gpt/data/input.txt"`. It was easy to miss because the script happened to contain exactly 65 unique characters too, so `vocab_size` printed 65 either way. The giveaway was the length: about 3,000 characters instead of 1,115,393.
@@ -708,9 +756,8 @@ After a code change here, push it to GitHub. The notebook clones the code fresh,
 
 ## Next steps
 
-Done: the bigram baseline, attention, all five transformer pieces, and a first round of scaling up (see "Scaling up").
+Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, and the tutorial-size model on a GPU (val loss 1.49).
 
-1. A validation loss of roughly 1.5 is where the text starts to read like Shakespeare. The next sizes to try are `n_embd` 128 or a context of 128, but each is several times slower per step on this CPU.
-2. Speed up attention. The heads run one after another in a Python loop. Doing all heads in one batched matrix multiply would make every step faster, which makes bigger models practical here.
-3. Try dropout again. The scaled-up model's train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
-4. Train the tutorial-size model on Kaggle (see "Training on a GPU") and record its loss and text here.
+1. Fight the overfitting of the GPU model: stop at the best val loss (early stopping, and save that version of the model), or raise dropout.
+2. Speed up attention. The heads run one after another in a Python loop. Doing all heads in one batched matrix multiply would make every step faster, on the CPU and on the GPU.
+3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
