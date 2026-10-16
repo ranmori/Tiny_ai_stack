@@ -147,7 +147,8 @@ if device == 'cuda':
     n_head = 6
     n_layer = 6
     # a model this big memorizes, so dropout is worth it here
-    dropout = 0.2
+    # 0.2 still overfit (train 1.07, val 1.48 after 5,000 steps), so try 0.3
+    dropout = 0.3
     train_batch_size = 64
     # a bigger model needs smaller, more careful steps
     learning_rate = 3e-4

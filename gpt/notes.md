@@ -659,7 +659,7 @@ The same `train.py` runs in both places. On the CPU it uses the settings from "S
 | `n_embd` | 64 | 384 |
 | `n_head` | 4 | 6 |
 | `n_layer` | 3 | 6 |
-| `dropout` | 0 | 0.2 |
+| `dropout` | 0 | 0.3 (0.2 in the first two runs) |
 | Batch size | 32 | 64 |
 | Learning rate | 1e-3 | 3e-4 |
 | Steps | 10,000 | 5,000 |
@@ -759,6 +759,8 @@ elif steps - best_step >= patience * eval_interval:
 - **After the loop, `m.load_state_dict(best_state)`** puts the best numbers back into the model, so the text and the attention plot at the end come from the same model `generate.py` will load.
 - The loop now runs to `max_steps + 1`, so the last estimate happens inside the loop and can also count as a new best.
 
+On Kaggle, the second GPU run with early stopping saved the model at step 4,000 (val loss 1.4825) and kept training to the end. Step 5,000 was only the second estimate without a new best, one short of the `patience` of 3. With the same seed the run was almost identical to the first one, so this is the first run's step-4,000 model. It took 54 minutes.
+
 Early stopping does not make the model better. It only stops the waste and keeps the right version. To get a lower val loss, the overfitting itself has to shrink, for example with more dropout.
 
 ## Mistakes I made and fixed
@@ -780,6 +782,6 @@ Early stopping does not make the model better. It only stops the waste and keeps
 
 Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.49), and early stopping.
 
-1. Shrink the overfitting of the GPU model: try dropout 0.3 on Kaggle. Early stopping (done) now keeps the best version either way.
+1. Shrink the overfitting of the GPU model: `train.py` now uses dropout 0.3 on the GPU. Run it on Kaggle and compare with the 0.2 runs (best val 1.4825, gap 0.41).
 2. Speed up attention. The heads run one after another in a Python loop. Doing all heads in one batched matrix multiply would make every step faster, on the CPU and on the GPU.
 3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
