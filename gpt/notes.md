@@ -659,7 +659,7 @@ The same `train.py` runs in both places. On the CPU it uses the settings from "S
 | `n_embd` | 64 | 384 |
 | `n_head` | 4 | 6 |
 | `n_layer` | 3 | 6 |
-| `dropout` | 0 | 0.3 (0.2 in the first two runs) |
+| `dropout` | 0 | 0.2 (0.3 was tried, see "Dropout 0.3 on the GPU") |
 | Batch size | 32 | 64 |
 | Learning rate | 1e-3 | 3e-4 |
 | Steps | 10,000 | 5,000 |
@@ -763,6 +763,33 @@ On Kaggle, the second GPU run with early stopping saved the model at step 4,000 
 
 Early stopping does not make the model better. It only stops the waste and keeps the right version. To get a lower val loss, the overfitting itself has to shrink, for example with more dropout.
 
+## Dropout 0.3 on the GPU
+
+Same model, same seed, same 5,000 steps, only dropout raised from 0.2 to 0.3.
+
+| Dropout | Best val loss | At step | Train loss there | Gap there | Final gap |
+| --- | --- | --- | --- | --- | --- |
+| 0.2 | **1.4825** | 4,000 | 1.134 | 0.35 | 0.41 |
+| 0.3 | 1.4863 | 4,000 | 1.187 | 0.30 | 0.35 |
+
+- **The gap shrank** (0.41 to 0.35 at the end). More dropout did make the model memorize less.
+- **The val loss did not improve.** 1.4863 against 1.4825 is a difference of 0.004, about the size of the wobble between estimates. The train loss went up by the same amount the gap went down.
+- **Both runs hit their best at step 4,000** and then flattened.
+- So dropout only moves the train loss. The val loss sits at about 1.48 either way. That points to the data as the limit: with 1 million characters, there is only so much this model can learn that carries over to unseen text.
+- `train.py` goes back to dropout 0.2, the slightly better and simpler setting.
+
+Text from the dropout 0.3 model:
+
+```text
+GLOUCESTER:
+I would fought you not good Bohemia,
+It will make me peril.
+
+PRINCE EDWARD:
+Peace, to my manster. For you believe
+The mease to my chamberland with Buckingham;
+```
+
 ## Mistakes I made and fixed
 
 - **`train.py` read itself.** It opened `"gpt/train.py"` instead of `"gpt/data/input.txt"`. It was easy to miss because the script happened to contain exactly 65 unique characters too, so `vocab_size` printed 65 either way. The giveaway was the length: about 3,000 characters instead of 1,115,393.
@@ -782,6 +809,6 @@ Early stopping does not make the model better. It only stops the waste and keeps
 
 Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.49), and early stopping.
 
-1. Shrink the overfitting of the GPU model: `train.py` now uses dropout 0.3 on the GPU. Run it on Kaggle and compare with the 0.2 runs (best val 1.4825, gap 0.41).
+1. The GPU model is stuck at a val loss of about 1.48 whatever the dropout. The likely limit is the data: 1 million characters for 10.8 million parameters. More text, or a smaller model trained longer, are the next things to try.
 2. Speed up attention. The heads run one after another in a Python loop. Doing all heads in one batched matrix multiply would make every step faster, on the CPU and on the GPU.
 3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
