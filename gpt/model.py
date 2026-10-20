@@ -60,35 +60,10 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        # the slow way, one head after the other in a python loop:
-        #   out = torch.cat([h(x) for h in self.heads], dim=-1)
-        # every head does the same math on the same x, only with its own weights,
-        # so stack the weights of all heads and do the math for every head at once
-        # the parameters still live in the heads, so saved models load the same way as before
-        B, T, C = x.shape
-        H = len(self.heads)
-        hs = self.heads[0].key.weight.shape[0] # head_size
-        # glue the key, query and value weights of every head into one big matrix: (3 * H * head_size, n_embd)
-        W = torch.cat([h.key.weight for h in self.heads] +
-                      [h.query.weight for h in self.heads] +
-                      [h.value.weight for h in self.heads])
-        # one ordinary matrix multiply for all three vectors of all heads: (B, T, 3 * H * head_size)
-        kqv = x @ W.T
-        # cut it into k, q and v, then cut each into the heads and move the head dimension in front of T
-        # (B, T, H * head_size) -> (B, T, H, head_size) -> (B, H, T, head_size)
-        k, q, v = [part.view(B, T, H, hs).transpose(1, 2) for part in kqv.split(H * hs, dim=-1)]
-        # from here it is exactly Head.forward, with one more dimension in front for the heads
-        wei = q @ k.transpose(-2, -1) * k.shape[-1]**-0.5 # (B, H, T, T)
-        wei = wei.masked_fill(self.heads[0].tril[:T, :T] == 0, float('-inf'))
-        wei = F.softmax(wei, dim=-1)
-        # give every head its own grid of weights back, for the attention plot
-        for i, h in enumerate(self.heads):
-            h.wei = wei[:, i].detach()
-        wei = self.heads[0].dropout(wei)
-        out = wei @ v # (B, H, T, head_size)
-        # put the heads side by side again: (B, H, T, head_size) -> (B, T, H, head_size) -> (B, T, H * head_size)
-        # the same result as torch.cat in the slow way: 4 heads of 8 numbers each -> 32 numbers per position
-        out = out.transpose(1, 2).reshape(B, T, H * k.shape[-1])
+        # every head gets the same x and gives back (B, T, head_size)
+        # cat glues the results together along the last dimension:
+        # 4 heads of 8 numbers each -> 32 numbers per position, the same size as n_embd
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
         out = self.dropout(self.proj(out))
         return out
 

@@ -790,6 +790,34 @@ Peace, to my manster. For you believe
 The mease to my chamberland with Buckingham;
 ```
 
+## Batching the heads (tried, not kept)
+
+The heads in `MultiHeadAttention` run one after another in a Python loop. The idea was that doing all of them at once would make every step faster.
+
+The batched version glued the key, query and value weights of every head into one matrix, did one matrix multiply for all of them, then cut the result back into heads:
+
+```python
+W = torch.cat([h.key.weight for h in self.heads] + [h.query.weight ...] + [h.value.weight ...])
+kqv = x @ W.T                                             # (B, T, 3 * H * head_size)
+k, q, v = [part.view(B, T, H, hs).transpose(1, 2)         # (B, H, T, head_size)
+           for part in kqv.split(H * hs, dim=-1)]
+```
+
+The rest is `Head.forward` with one more dimension in front for the heads. It gave exactly the same output as the loop on the CPU, and a difference of 0.0000017 on the GPU (the GPU adds numbers in a different order).
+
+Time for one training step:
+
+| Where | Model | Loop | Batched |
+| --- | --- | --- | --- |
+| Laptop CPU | Context 64, size 64 | 92 ms | 84 ms |
+| Laptop CPU | Context 256, size 384 | 13.6 s | 14.9 s |
+| Kaggle GPU | Context 256, size 384 | 453 and 517 ms | 434 and 503 ms |
+
+- **About 3% faster on the GPU, and nothing on the CPU.** The loop over 6 heads was never the slow part. The time goes into the attention scores (every position against every other, 256 x 256 per head) and the feed-forward layers, and those are the same amount of work either way.
+- **A first try was slower than the loop**: it multiplied `(B, 1, T, C)` by the stacked weights `(H, C, head_size)`, which PyTorch turns into many small matrix multiplies.
+- **Not kept.** 3% is not worth the harder-to-read code, so `model.py` keeps the loop.
+- **Measure before optimizing.** The plan assumed the loop was slow. Timing showed it was not.
+
 ## Mistakes I made and fixed
 
 - **`train.py` read itself.** It opened `"gpt/train.py"` instead of `"gpt/data/input.txt"`. It was easy to miss because the script happened to contain exactly 65 unique characters too, so `vocab_size` printed 65 either way. The giveaway was the length: about 3,000 characters instead of 1,115,393.
@@ -810,5 +838,4 @@ The mease to my chamberland with Buckingham;
 Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.49), and early stopping.
 
 1. The GPU model is stuck at a val loss of about 1.48 whatever the dropout. The likely limit is the data: 1 million characters for 10.8 million parameters. More text, or a smaller model trained longer, are the next things to try.
-2. Speed up attention. The heads run one after another in a Python loop. Doing all heads in one batched matrix multiply would make every step faster, on the CPU and on the GPU.
-3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
+2. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
