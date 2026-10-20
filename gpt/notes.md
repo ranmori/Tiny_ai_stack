@@ -9,6 +9,7 @@ Notes on what I have built so far in the `gpt` folder, and what comes next.
 | `model.py` | `Head`, `MultiHeadAttention`, `FeedForward`, `Block` and `GPTLanguageModel` | A complete small GPT |
 | `compare.py` | Trains six models, switching on one more piece each time, and plots what each piece adds | Done |
 | `generate.py` | Loads the model saved by `train.py` and writes text without retraining | Updated for the full model |
+| `data/prepare.py` | Downloads the complete works and writes `data/extra.txt`, 29 more plays cleaned to look like `input.txt` | Done |
 | `bigram.py` | `BigramLanguageModel`, the baseline to beat | Done, kept for reference |
 | `plots.py` | One plot function per stage, plus two shared helpers | Done |
 | `attention.py` | Scratch file for learning attention, no model in it | Steps 1 and 2 done |
@@ -790,6 +791,64 @@ Peace, to my manster. For you believe
 The mease to my chamberland with Buckingham;
 ```
 
+## More training text (`data/prepare.py`)
+
+The GPU model got stuck at a val loss of about 1.48 whatever the dropout, and the train loss kept falling: it was running out of new things to learn from 1 million characters. The fix to try is more text.
+
+### Where the val data comes from
+
+The val data is the last 10% of `input.txt`. Looking at the speakers in it (Petruchio, Katharina, Prospero, Miranda...), it is the end of **The Taming of the Shrew** and all of **The Tempest**. The train part is mostly Coriolanus, Richard II and III, Henry VI part 3, Measure for Measure, Romeo and Juliet and The Winter's Tale.
+
+So the extra text must never contain those two plays. If it did, the model would train on the val text, and the val loss would look better without the model being better. That is called **leakage**.
+
+### What `prepare.py` does
+
+`python gpt/data/prepare.py` downloads Shakespeare's complete works from Project Gutenberg (5.6 MB) and writes `gpt/data/extra.txt`:
+
+1. **Cuts the book into works** using the list of titles at the top.
+2. **Leaves out** the poems (no speakers, so they do not look like a play), the two val plays, and every play that is already in `input.txt`.
+3. **Cleans each play** into the format of `input.txt`:
+
+| Gutenberg | `input.txt` style |
+| --- | --- |
+| `CLEOPATRA.` | `CLEOPATRA:` |
+| `’` `‘` `“` `”` | `'` |
+| `—` | `--` |
+| ` Enter Antony.` and `[_Exeunt._]` | removed (stage directions) |
+| `ACT I`, `SCENE II. Rome.` | removed |
+| List of scenes and characters | removed |
+| `é`, `æ` | `e`, `ae` |
+| Any other character not in the 65 | removed |
+
+The 65 characters stay the same, so the model and `generate.py` do not change.
+
+### Finding the plays that are already in `input.txt`
+
+`input.txt` comes from a different edition, so its lines are not word for word the same as Gutenberg's. Comparing whole lines found nothing. Instead, `prepare.py` cuts both texts into **runs of 6 words** (lower case, letters only) and checks what share of a play's runs also appear in `input.txt`:
+
+| Play | Runs also in `input.txt` |
+| --- | --- |
+| The Winter's Tale | 89% |
+| Romeo and Juliet | 85% |
+| Measure for Measure | 83% |
+| Richard II, Coriolanus, Henry VI part 3 | 80 to 81% |
+| Richard III | 62% |
+| Every other play | 0% |
+
+The gap is so clear that any threshold between 1% and 60% would work; `prepare.py` uses 10%.
+
+Checks on the result:
+
+- 29 plays, **3,567,097 characters**. Together with the train part of `input.txt` that is 4,570,950 training characters, **4.5 times** as much as before.
+- Only 0.08% of the val text's 6-word runs appear anywhere in `extra.txt`: common phrases, not copied text.
+- No `[`, `]`, `_`, `Contents` or `Dramatis Personae` left.
+
+### Using it
+
+`train.py` has `use_extra = True`. The extra text is added to `train_data` only. `val_data` is exactly the same as before, so the val loss is directly comparable with the 1.48 of the earlier runs. Everything else on the GPU stays the same: same model, dropout 0.2, 5,000 steps.
+
+With 4.5 times the text, 5,000 steps of 64 chunks of 256 characters go through the training text about 18 times instead of about 80. The model should run out of new things to learn much later, so the val loss should keep falling for longer.
+
 ## Batching the heads (tried, not kept)
 
 The heads in `MultiHeadAttention` run one after another in a Python loop. The idea was that doing all of them at once would make every step faster.
@@ -837,5 +896,5 @@ Time for one training step:
 
 Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.49), and early stopping.
 
-1. The GPU model is stuck at a val loss of about 1.48 whatever the dropout. The likely limit is the data: 1 million characters for 10.8 million parameters. More text, or a smaller model trained longer, are the next things to try.
+1. Train the GPU model with the extra text on Kaggle (see "More training text") and compare its val loss with 1.48.
 2. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.

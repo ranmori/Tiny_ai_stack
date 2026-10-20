@@ -57,6 +57,16 @@ print(data[:1000])
 n= int(0.9*len(data))
 train_data=data[:n]
 val_data= data[n:]
+
+# more training text: 29 more plays from Project Gutenberg, made by gpt/data/prepare.py
+# it only goes into train_data, val_data stays exactly the same so the val loss can be compared with earlier runs
+# prepare.py leaves out the two plays the val data comes from, so the model never sees val text while training
+use_extra = True
+if use_extra:
+    with open("gpt/data/extra.txt", "r", encoding="utf-8") as file:
+        extra = file.read()
+    train_data = torch.cat([train_data, torch.tensor(encode(extra), dtype=torch.long)])
+print('train characters:', len(train_data), 'val characters:', len(val_data))
     
 # lets check the first 9 char
 block_size = 8
