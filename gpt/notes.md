@@ -902,6 +902,30 @@ This miragies, if priest us, thy fault,
 Can honour be seg of dissent, at the wind
 ```
 
+### Results: 10,000 steps with the extra text
+
+The same run, twice as long.
+
+| Step | Train loss | Val loss |
+| --- | --- | --- |
+| 5,000 | 1.24 | 1.37 |
+| 6,000 | 1.21 | 1.35 |
+| 7,000 | 1.18 | 1.33 |
+| 8,000 | 1.16 | 1.31 |
+| 9,000 | 1.15 | 1.30 |
+| 10,000 | 1.13 | **1.297** |
+
+| GPU model | Steps | Best val loss | Gap at the end |
+| --- | --- | --- | --- |
+| `input.txt` only | 5,000 | 1.4825 | 0.41 |
+| With extra text | 5,000 | 1.3666 | 0.13 |
+| **With extra text** | **10,000** | **1.2970** | **0.17** |
+
+- **Another 0.07 lower** from training twice as long. Altogether the extra text and the longer training took the val loss from 1.48 to 1.30.
+- **It is slowing down.** The val loss fell 0.07 between steps 5,000 and 10,000, but only 0.006 in the last 500 steps. Step 8,500 was the first estimate without a new best (1.3175 against 1.3111), and the model recovered by step 9,000.
+- **The gap is growing again** (0.13 at step 5,000, 0.17 at step 10,000). The model is starting to run out of new things in 4.5 million characters too, but much later than with 1 million.
+- Early stopping never triggered: there was never more than one estimate in a row without a new best.
+
 ## Batching the heads (tried, not kept)
 
 The heads in `MultiHeadAttention` run one after another in a Python loop. The idea was that doing all of them at once would make every step faster.
@@ -947,7 +971,7 @@ Time for one training step:
 
 ## Next steps
 
-Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, and 4.5 times more training text (val loss 1.37).
+Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, 4.5 times more training text, and 10,000 steps on the GPU (val loss 1.30).
 
-1. Train the GPU model with the extra text for longer: `train.py` now runs 10,000 steps on the GPU (about 1 hour 50 minutes on Kaggle). Its val loss (1.37) was still falling at step 5,000.
+1. The GPU model is at a val loss of 1.30 and still falling slowly, while the gap grows. Training even longer would gain little. More text again, or a learning rate that shrinks during training, are the next things to try.
 2. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
