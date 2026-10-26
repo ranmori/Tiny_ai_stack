@@ -663,7 +663,7 @@ The same `train.py` runs in both places. On the CPU it uses the settings from "S
 | `dropout` | 0 | 0.2 (0.3 was tried, see "Dropout 0.3 on the GPU") |
 | Batch size | 32 | 64 |
 | Learning rate | 1e-3 | 3e-4 |
-| Steps | 10,000 | 5,000 |
+| Steps | 10,000 | 10,000 (5,000 before the extra text) |
 | Parameters | 161,985 | about 10.8 million |
 
 The tutorial reached a val loss of about 1.48 with these settings.
@@ -849,6 +849,59 @@ Checks on the result:
 
 With 4.5 times the text, 5,000 steps of 64 chunks of 256 characters go through the training text about 18 times instead of about 80. The model should run out of new things to learn much later, so the val loss should keep falling for longer.
 
+### First run: the small model by accident
+
+The first Kaggle run with the extra text had the GPU switched off, so `train.py` printed `device: cpu` and trained the small CPU model (161,985 parameters, 10,000 steps). Not the run that was planned, but a useful one:
+
+| Small model | Best val loss | Train/val gap at the end |
+| --- | --- | --- |
+| Without extra text | 1.6600 | 0.20 |
+| With extra text | 1.6566 | 0.11 |
+
+- **The val loss hardly moved.** The small model was never short of text. It is limited by its size: 162 thousand numbers can only hold so much.
+- **The gap halved** and the val loss set a new best at every estimate up to the end. With more text there is less to memorize.
+- So more text helps a model that has run out of text, like the 10.8 million parameter GPU model, not one that has run out of room.
+
+### Results: the GPU model with 4.5 times the text
+
+Same model, same seed, dropout 0.2, 5,000 steps. Only the training text changed.
+
+| Step | Train loss | Val loss, `input.txt` only | Val loss, with extra text |
+| --- | --- | --- | --- |
+| 1,000 | 1.54 / 1.65 | 1.73 | 1.74 |
+| 2,000 | 1.32 / 1.42 | 1.56 | 1.53 |
+| 3,000 | 1.21 / 1.32 | 1.50 | 1.45 |
+| 4,000 | 1.13 / 1.27 | 1.48 | 1.40 |
+| 5,000 | 1.07 / 1.24 | 1.48 | **1.37** |
+
+(Train loss: without / with the extra text.)
+
+| Model | Best val loss | Train/val gap at the end |
+| --- | --- | --- |
+| GPU model, `input.txt` only | 1.4825 | 0.41 |
+| GPU model, dropout 0.3 | 1.4863 | 0.35 |
+| **GPU model, with extra text** | **1.3666** | **0.13** |
+
+- **The biggest single gain since residual connections.** 0.12 lower than anything before, from data alone, without touching the model.
+- **The gap shrank from 0.41 to 0.13.** The train loss is higher (1.24 against 1.07) because there is far more text to remember, so the model has to learn patterns instead.
+- **Up to step 1,500 the two runs are the same.** The extra text only starts to matter once the old run starts to run out of new things to learn.
+- **The val loss was still falling at step 5,000** (1.3770 to 1.3666 in the last 500 steps), and every estimate was a new best. Early stopping never came close to stopping. Training longer should bring it lower.
+- Compare with dropout 0.3: it shrank the gap by pushing the train loss up, and the val loss stayed the same. More text shrank the gap by pulling the val loss down. That is the difference between hiding memorization and giving the model something better to learn.
+
+Text from the model trained with the extra text (it now knows characters from the new plays: Pucelle from Henry VI part 1, Beatrice from Much Ado About Nothing):
+
+```text
+PUCELLE:
+An earth.
+
+BOY:
+But fast the comfort of that heavens with thy flood!
+
+BEATRICE:
+This miragies, if priest us, thy fault,
+Can honour be seg of dissent, at the wind
+```
+
 ## Batching the heads (tried, not kept)
 
 The heads in `MultiHeadAttention` run one after another in a Python loop. The idea was that doing all of them at once would make every step faster.
@@ -894,7 +947,7 @@ Time for one training step:
 
 ## Next steps
 
-Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.49), and early stopping.
+Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, and 4.5 times more training text (val loss 1.37).
 
-1. Train the GPU model with the extra text on Kaggle (see "More training text") and compare its val loss with 1.48.
+1. Train the GPU model with the extra text for longer: `train.py` now runs 10,000 steps on the GPU (about 1 hour 50 minutes on Kaggle). Its val loss (1.37) was still falling at step 5,000.
 2. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.

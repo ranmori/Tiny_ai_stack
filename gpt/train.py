@@ -162,7 +162,8 @@ if device == 'cuda':
     train_batch_size = 64
     # a bigger model needs smaller, more careful steps
     learning_rate = 3e-4
-    max_steps = 5000
+    # with the extra text the val loss was still falling at 5,000 steps, so train twice as long
+    max_steps = 10000
     eval_interval = 500
 
 m = GPTLanguageModel(vocab_size, n_embd, block_size, n_head, n_layer, dropout)
