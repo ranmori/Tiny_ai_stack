@@ -212,6 +212,21 @@ m.train()
 # so every weight gets its own adaptive step size.
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 
+# learning rate decay: big steps at the start to get going, small careful steps at the end to settle in
+# the learning rate follows half a cosine wave, from learning_rate at step 0 down to min_lr at the last step
+# step 0: cos(0) = 1, so the full learning_rate
+# halfway: cos(pi/2) = 0, so halfway between learning_rate and min_lr
+# last step: cos(pi) = -1, so min_lr
+import math
+lr_decay = True
+min_lr = learning_rate / 10
+
+def get_lr(step):
+    if not lr_decay:
+        return learning_rate
+    progress = step / max_steps # 0 at the start, 1 at the end
+    return min_lr + 0.5 * (1 + math.cos(math.pi * progress)) * (learning_rate - min_lr)
+
 # for the plots: the loss at every step
 losses = []
 
@@ -270,7 +285,7 @@ for steps in range(max_steps + 1): # increase number of steps for good results..
     # if train keeps going down but val goes up the model is memorizing (overfitting)
     if steps % eval_interval == 0:
         est = estimate_loss()
-        print(f"step {steps}: train loss {est['train']:.4f}, val loss {est['val']:.4f}")
+        print(f"step {steps}: train loss {est['train']:.4f}, val loss {est['val']:.4f}, learning rate {get_lr(steps):.2e}")
         eval_steps.append(steps)
         eval_train.append(est['train'])
         eval_val.append(est['val'])
@@ -299,6 +314,9 @@ for steps in range(max_steps + 1): # increase number of steps for good results..
     logits, loss = m(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
+    # set this step's learning rate, the optimizer keeps it in param_groups (one group here, all the parameters)
+    for group in optimizer.param_groups:
+        group['lr'] = get_lr(steps)
     optimizer.step()
     losses.append(loss.item())
 

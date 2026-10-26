@@ -926,6 +926,35 @@ The same run, twice as long.
 - **The gap is growing again** (0.13 at step 5,000, 0.17 at step 10,000). The model is starting to run out of new things in 4.5 million characters too, but much later than with 1 million.
 - Early stopping never triggered: there was never more than one estimate in a row without a new best.
 
+## Learning rate decay (`train.py`)
+
+Until now the learning rate stayed the same for the whole run. Early on, big steps are useful because the model is far from good. Near the end the model is close, and big steps make it jump around the best point instead of settling into it. So the learning rate now starts high and shrinks.
+
+```python
+min_lr = learning_rate / 10
+
+def get_lr(step):
+    progress = step / max_steps   # 0 at the start, 1 at the end
+    return min_lr + 0.5 * (1 + math.cos(math.pi * progress)) * (learning_rate - min_lr)
+```
+
+It follows half a cosine wave:
+
+| Step (of 10,000) | `cos(pi * progress)` | GPU learning rate |
+| --- | --- | --- |
+| 0 | 1 | 3.0e-4 |
+| 2,500 | 0.71 | 2.6e-4 |
+| 5,000 | 0 | 1.65e-4 |
+| 7,500 | -0.71 | 0.7e-4 |
+| 10,000 | -1 | 0.3e-4 |
+
+- **Why a cosine and not a straight line:** it stays high for longer at the start and flattens out at the end, so the model gets many big steps first and a long gentle landing.
+- **`min_lr` is a tenth of the start**, so learning never stops completely.
+- **Every step sets the rate** with `group['lr'] = get_lr(steps)`. The optimizer keeps its settings in `param_groups`, a list with one group here that holds every parameter.
+- The rate is printed at every estimate, so the log shows it going down.
+- `lr_decay = False` switches back to a fixed learning rate.
+- The starting learning rate is unchanged (3e-4 on the GPU, 1e-3 on the CPU), so this run differs from the 1.2970 run in one thing only.
+
 ## Batching the heads (tried, not kept)
 
 The heads in `MultiHeadAttention` run one after another in a Python loop. The idea was that doing all of them at once would make every step faster.
@@ -973,5 +1002,6 @@ Time for one training step:
 
 Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, 4.5 times more training text, and 10,000 steps on the GPU (val loss 1.30).
 
-1. The GPU model is at a val loss of 1.30 and still falling slowly, while the gap grows. Training even longer would gain little. More text again, or a learning rate that shrinks during training, are the next things to try.
-2. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
+1. Run the GPU model with learning rate decay on Kaggle (see "Learning rate decay") and compare with 1.2970.
+2. More text again: all of Shakespeare's plays are already used, so it would have to be other authors.
+3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
