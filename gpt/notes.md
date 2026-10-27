@@ -952,8 +952,34 @@ It follows half a cosine wave:
 - **`min_lr` is a tenth of the start**, so learning never stops completely.
 - **Every step sets the rate** with `group['lr'] = get_lr(steps)`. The optimizer keeps its settings in `param_groups`, a list with one group here that holds every parameter.
 - The rate is printed at every estimate, so the log shows it going down.
-- `lr_decay = False` switches back to a fixed learning rate.
+- `lr_decay = False` switches back to a fixed learning rate (and is the setting now, see the results below).
 - The starting learning rate is unchanged (3e-4 on the GPU, 1e-3 on the CPU), so this run differs from the 1.2970 run in one thing only.
+
+### Results: decay made it worse
+
+| Step | Fixed learning rate | With decay | Learning rate with decay |
+| --- | --- | --- | --- |
+| 2,500 | 1.4883 | 1.4944 | 2.6e-4 |
+| 5,000 | 1.3685 | 1.3772 | 1.65e-4 |
+| 7,500 | 1.3247 | 1.3399 | 0.7e-4 |
+| 9,500 | 1.3026 | **1.3221** (best) | 0.3e-4 |
+| 10,000 | **1.2970** | 1.3282 | 0.3e-4 |
+
+- **The decay run was behind at every estimate from step 3,000**, and the gap kept growing: 0.006 at step 2,500, 0.03 at the end.
+- **Why:** decay pays off when a model has stopped improving at a fixed learning rate and is jumping around its best point. This model never got there. With a fixed rate it was still improving at step 10,000. Shrinking the steps only slowed it down: by step 5,000 the rate was already half, by step 7,500 under a quarter.
+- **The train loss is higher too** (1.17 against 1.13), so the model really learned less. It is not a case of memorizing less.
+- **Not kept:** `lr_decay = False`. The code stays, because decay would make sense for a run long enough to level off.
+- Decay usually comes with a higher starting learning rate, so the model learns fast first and settles later. This run kept the start at 3e-4 to change one thing at a time. A higher start (6e-4 or 1e-3) with decay would be a separate experiment.
+
+Text from the decay model:
+
+```text
+ALBANY:
+How fares thee stands else?
+
+MALCOLM:
+Thou art villain, great Mars, what a fearful Duke.
+```
 
 ## Batching the heads (tried, not kept)
 
@@ -1002,6 +1028,6 @@ Time for one training step:
 
 Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, 4.5 times more training text, and 10,000 steps on the GPU (val loss 1.30).
 
-1. Run the GPU model with learning rate decay on Kaggle (see "Learning rate decay") and compare with 1.2970.
+1. Learning rate decay from the same start made it worse (1.3221). A higher starting learning rate with decay is the version still to try.
 2. More text again: all of Shakespeare's plays are already used, so it would have to be other authors.
 3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.

@@ -218,7 +218,8 @@ optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 # halfway: cos(pi/2) = 0, so halfway between learning_rate and min_lr
 # last step: cos(pi) = -1, so min_lr
 import math
-lr_decay = True
+# tried on the GPU: val loss 1.3221 against 1.2970 with a fixed learning rate, see notes.md, so it is off
+lr_decay = False
 min_lr = learning_rate / 10
 
 def get_lr(step):
