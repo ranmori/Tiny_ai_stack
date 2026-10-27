@@ -1,7 +1,8 @@
 
 
 from model import GPTLanguageModel
-from plots import plot_attention_training
+from plots import plot_attention_training, plot_live
+import matplotlib.pyplot as plt
 
 with open("gpt/data/input.txt", "r", encoding="utf-8") as file:
     text = file.read()
@@ -259,8 +260,21 @@ def estimate_loss():
     m.train()
     return out
 
-# for the plots: the step, train loss and val loss of every estimate
-eval_steps, eval_train, eval_val = [], [], []
+# for the plots: the step, train loss, val loss and learning rate of every estimate
+eval_steps, eval_train, eval_val, eval_lr = [], [], [], []
+
+# in a notebook (Kaggle) show a loss graph that redraws at every estimate, so the run can be watched while it trains
+# in a terminal there is no notebook, so nothing changes there
+try:
+    from IPython import get_ipython
+    from IPython.display import display
+    in_notebook = get_ipython() is not None and 'IPKernelApp' in get_ipython().config
+except ImportError:
+    in_notebook = False
+# the best val loss of the earlier run with the same settings, drawn as a line to beat
+target = 1.2970 if device == 'cuda' else 1.6566
+# display_id=True gives back a handle, handle.update() swaps the picture in place instead of adding a new one each time
+live_graph = None
 
 # the settings are saved with the model, generate.py has to rebuild a model of exactly the same shape before it can load the numbers
 settings = {'n_embd': n_embd, 'block_size': block_size, 'n_head': n_head, 'n_layer': n_layer, 'dropout': dropout}
@@ -290,6 +304,16 @@ for steps in range(max_steps + 1): # increase number of steps for good results..
         eval_steps.append(steps)
         eval_train.append(est['train'])
         eval_val.append(est['val'])
+        eval_lr.append(get_lr(steps))
+
+        if in_notebook:
+            fig = plot_live(eval_steps, eval_train, eval_val, eval_lr, target)
+            if live_graph is None:
+                live_graph = display(fig, display_id=True)
+            else:
+                live_graph.update(fig)
+            # close it, otherwise the notebook also shows every old version at the end of the cell
+            plt.close(fig)
 
         if est['val'] < best_val:
             best_val = est['val']
@@ -340,4 +364,11 @@ m.train()
 # and the loss (with the bigram's val loss as the line to beat) next to the attention weights after training
 wei_after = attention_weights()
 plot_attention_training(losses, vocab_size, eval_steps, eval_train, eval_val,
-                        wei_before, wei_after, decode(example.tolist()), baseline=2.50)
+                        wei_before, wei_after, decode(example.tolist()), baseline=2.50,
+                        save_prefix='gpt/plot')
+
+# also save the final live graph as a picture, on Kaggle it can be downloaded from the file panel
+# like the other two: gpt/plot_loss.png, gpt/plot_before.png, gpt/plot_after.png
+fig = plot_live(eval_steps, eval_train, eval_val, eval_lr, target)
+fig.savefig('gpt/plot_loss.png', dpi=80)
+plt.close(fig)

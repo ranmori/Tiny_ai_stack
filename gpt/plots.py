@@ -84,12 +84,47 @@ def plot_attention(wei_average, wei_attention):
     plt.show()
 
 
-def plot_attention_training(losses, vocab_size, eval_steps, eval_train, eval_val, wei_before, wei_after, example, baseline=None):
+def plot_live(eval_steps, eval_train, eval_val, learning_rates, target=None):
+    # for train.py in a notebook (Kaggle): the loss so far, redrawn at every estimate
+    # learning_rates: the learning rate at each of those steps
+    # target: the best val loss of an earlier run, drawn as a line to beat
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4.5), gridspec_kw={'width_ratios': [3, 1]})
+
+    # left: train and val loss, without step 0 (about 4.4) so the part that matters is not squashed flat
+    s, tr, va = eval_steps[1:], eval_train[1:], eval_val[1:]
+    ax1.plot(s, tr, 'o-', color='tab:green', markersize=3, label='train loss')
+    ax1.plot(s, va, 'o-', color='tab:red', markersize=3, label='val loss')
+    if va:
+        # mark the best val loss so far, that is the model saved in gpt.pt
+        best = min(range(len(va)), key=lambda i: va[i])
+        ax1.plot(s[best], va[best], '*', color='black', markersize=14, label=f'best val {va[best]:.4f} (step {s[best]})')
+        # the gap between the two lines: the bigger it is, the more the model is memorizing
+        ax1.set_title(f'step {eval_steps[-1]}: train {eval_train[-1]:.4f}, val {eval_val[-1]:.4f}, gap {eval_val[-1] - eval_train[-1]:.3f}')
+    if target is not None:
+        ax1.axhline(target, color='gray', linestyle='--', label=f'best earlier run ({target:.4f})')
+    ax1.set_xlabel('step')
+    ax1.set_ylabel('cross entropy')
+    ax1.grid(alpha=0.3)
+    ax1.legend()
+
+    # right: the learning rate, flat unless lr_decay is on
+    ax2.plot(eval_steps, learning_rates, 'o-', color='tab:blue', markersize=3)
+    ax2.set_title('learning rate')
+    ax2.set_xlabel('step')
+    ax2.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
+    ax2.grid(alpha=0.3)
+
+    fig.tight_layout()
+    return fig
+
+
+def plot_attention_training(losses, vocab_size, eval_steps, eval_train, eval_val, wei_before, wei_after, example, baseline=None, save_prefix=None):
     # for the full model (model.py), it opens two windows
     # wei_before, wei_after: the attention weights for one example chunk, before and after training
     #   a list with one entry per block, each entry a list with one (T, T) grid per head
     # example: the characters of that chunk, used to label the rows and columns
     # baseline: the val loss of the bigram, drawn as a line to beat
+    # save_prefix: if given, both windows are also saved as png files, save_prefix + '_before.png' and '_after.png'
     n_layer = len(wei_after)
     n_head = len(wei_after[0])
     labels = ['\\n' if ch == '\n' else '_' if ch == ' ' else ch for ch in example]
@@ -102,6 +137,8 @@ def plot_attention_training(losses, vocab_size, eval_steps, eval_train, eval_val
         for h in range(n_head):
             draw_weights(fig.add_subplot(grid[b, h]), wei_before[b][h], f'block {b + 1} head {h + 1} on "{shown}" before training', labels)
     fig.tight_layout()
+    if save_prefix:
+        fig.savefig(save_prefix + '_before.png', dpi=80)
 
     # window 2: the loss on the left over all the rows, then the attention after training
     fig = plt.figure('after training', figsize=(7 + 4.2 * n_head, 4 * n_layer))
@@ -111,6 +148,8 @@ def plot_attention_training(losses, vocab_size, eval_steps, eval_train, eval_val
         for h in range(n_head):
             draw_weights(fig.add_subplot(grid[b, 1 + h]), wei_after[b][h], f'block {b + 1} head {h + 1} on "{shown}" after training', labels)
     fig.tight_layout()
+    if save_prefix:
+        fig.savefig(save_prefix + '_after.png', dpi=80)
 
     plt.show()
 

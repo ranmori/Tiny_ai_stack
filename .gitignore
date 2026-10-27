@@ -4,3 +4,5 @@ __pycache__/
 .kilo/
 
 *.pt
+
+gpt/plot_*.png

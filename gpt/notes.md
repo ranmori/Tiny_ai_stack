@@ -690,6 +690,22 @@ sys.path.insert(0, 'gpt')
 
 When it finishes, `gpt.pt` is in the file panel under `/kaggle/working/Tiny_ai_stack/gpt/`. Download it and put it in this laptop's `gpt` folder, and `python gpt/generate.py` writes with it.
 
+### Watching a run on Kaggle
+
+In a notebook, `train.py` shows a **live loss graph** under the cell that redraws at every estimate (every 500 steps on the GPU):
+
+- **Left:** train and val loss, with a star on the best val loss so far (the model saved in `gpt.pt`) and a dashed line at the best val loss of the earlier run with the same settings (1.2970 on the GPU). The title shows the latest losses and the gap between them.
+- **Right:** the learning rate, a flat line unless `lr_decay` is on.
+- Step 0 (about 4.4) is left out, so the part that matters is not squashed flat.
+
+How it works:
+
+- `get_ipython()` only exists inside a notebook. `'IPKernelApp' in get_ipython().config` is true in a Jupyter kernel like Kaggle's, so in a terminal nothing changes.
+- `display(fig, display_id=True)` shows the graph and gives back a handle. `handle.update(fig)` swaps the picture in place instead of adding a new graph every 500 steps.
+- `plt.close(fig)` after each update, otherwise the notebook would show every old version at the end of the cell.
+
+At the end, three pictures are saved next to `gpt.pt`, so they can be downloaded from Kaggle's file panel: `plot_loss.png` (the final live graph), `plot_before.png` and `plot_after.png` (the attention plots). `.gitignore` keeps them out of GitHub.
+
 After a code change here, push it to GitHub. The notebook clones the code fresh, so a new session gets the latest version.
 
 The browser saves `gpt.pt` as `gpt.zip`, because a `.pt` file is a zip archive inside. Do not unzip it. Rename it to `gpt.pt` and put it in the `gpt` folder. The model trained on this laptop is kept next to it as `gpt_cpu.pt`.
