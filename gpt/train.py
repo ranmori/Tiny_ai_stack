@@ -162,7 +162,8 @@ if device == 'cuda':
     dropout = 0.2
     train_batch_size = 64
     # a bigger model needs smaller, more careful steps
-    learning_rate = 3e-4
+    # 3e-4 with a fixed rate gave 1.2970, now trying a higher start (6e-4) that decays, see "Learning rate decay" in notes.md
+    learning_rate = 6e-4
     # with the extra text the val loss was still falling at 5,000 steps, so train twice as long
     max_steps = 10000
     eval_interval = 500
@@ -219,8 +220,10 @@ optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 # halfway: cos(pi/2) = 0, so halfway between learning_rate and min_lr
 # last step: cos(pi) = -1, so min_lr
 import math
-# tried on the GPU: val loss 1.3221 against 1.2970 with a fixed learning rate, see notes.md, so it is off
-lr_decay = False
+# decaying from 3e-4 on the GPU gave 1.3221 against 1.2970 with a fixed 3e-4, it only slowed the model down
+# now on the GPU: start twice as high (6e-4) and decay, so the steps are bigger early on and small only at the end
+# on the CPU it stays off
+lr_decay = device == 'cuda'
 min_lr = learning_rate / 10
 
 def get_lr(step):

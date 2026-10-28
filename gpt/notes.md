@@ -997,6 +997,20 @@ MALCOLM:
 Thou art villain, great Mars, what a fearful Duke.
 ```
 
+### Next run: a higher start with decay
+
+Decay usually comes with a higher starting learning rate. The GPU run now starts at **6e-4** (twice the old fixed rate) and decays to 6e-5:
+
+| Step (of 10,000) | Learning rate |
+| --- | --- |
+| 0 | 6.0e-4 |
+| 2,500 | 5.2e-4 |
+| 5,000 | 3.3e-4 |
+| 7,500 | 1.4e-4 |
+| 10,000 | 0.6e-4 |
+
+For the first half of the run the steps are bigger than the fixed 3e-4, so the model should learn faster early on, and the small steps only come at the end. The fixed-rate run gave 1.2970, and running it again gave 1.2975, so the two runs of the same settings differ by about 0.0005. A result has to beat 1.297 by clearly more than that to count.
+
 ## Batching the heads (tried, not kept)
 
 The heads in `MultiHeadAttention` run one after another in a Python loop. The idea was that doing all of them at once would make every step faster.
@@ -1044,6 +1058,6 @@ Time for one training step:
 
 Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, 4.5 times more training text, and 10,000 steps on the GPU (val loss 1.30).
 
-1. Learning rate decay from the same start made it worse (1.3221). A higher starting learning rate with decay is the version still to try.
+1. Run the GPU model with a 6e-4 start and decay on Kaggle (see "Next run: a higher start with decay") and compare with 1.297.
 2. More text again: all of Shakespeare's plays are already used, so it would have to be other authors.
 3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
