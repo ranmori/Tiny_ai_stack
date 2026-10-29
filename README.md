@@ -67,13 +67,66 @@ Every play is already used for training or val, so the poems are the only Shakes
 
 For comparison, the best possible bigram (real character-pair frequencies from the training text) scores 2.46 on val.
 
+## Inference
+
+### KV cache
+
+`generate` used to run the whole context through the model for every new character. The keys and values of earlier characters never change, so they are now kept in a cache and only the newest character goes through the model. `python gpt/benchmark.py` first checks that nothing changed (logits within 1.3e-5, and the same 255 characters for the same seed), then measures on a laptop CPU (4 threads):
+
+| Method | 250 characters | 1,000 characters |
+| --- | --- | --- |
+| No cache | 16 per second | 10 per second |
+| **KV cache** | **60 per second** | **58 per second** |
+
+3.8 times faster for 250 characters and 5.5 times for 1,000. Without the cache it slows down as the context grows; with it the speed stays flat.
+
+### Serving and batching
+
+`gpt/server.py` is a FastAPI server with `/generate` and a streaming `/generate/stream`. `gpt/batcher.py` adds request batching: requests that arrive within 10 ms are generated together in one forward pass (prompts left-padded, with a padding mask and per-row positions). Batched requests give exactly the same text as requests run alone.
+
+`python gpt/loadtest.py`, streaming 200 characters per user, laptop CPU:
+
+| Users at once | Characters/second, no batching | Characters/second, batching | Total time p50, no batching | Total time p50, batching |
+| --- | --- | --- | --- | --- |
+| 1 | 60 | 58 | 3.3 s | 3.4 s |
+| 2 | 82 | 97 | 4.9 s | 4.1 s |
+| 4 | 49 | 96 | 16.0 s | 4.5 s |
+| 8 | 51 | 159 | 31.3 s | 10.1 s |
+| 16 | 40 | **182** | 79.1 s | **11.5 s** |
+
+Without batching the requests' threads fight over the same 4 cores, so the server gets slower overall as users are added. With batching, throughput grows 4.5 times at 16 users. The cost: this is static batching, so a request that misses the 10 ms window waits for the running batch to finish before its first character (4 to 11 s at p95). Continuous batching, where a new request joins a running batch, is the next step.
+
 ## Running it
 
-Needs Python 3 with PyTorch and matplotlib. The autograd folder also uses scikit-learn and pytest.
+### Quick start
 
 ```bash
-pip install torch matplotlib scikit-learn pytest
+git clone https://github.com/ranmori/Tiny_ai_stack.git
+cd Tiny_ai_stack
+pip install -r requirements.txt
+python gpt/generate.py
 ```
+
+The trained model (`gpt.pt`, about 52 MB) is not in git. The first time, `generate.py` downloads it from the GitHub release.
+
+### Server
+
+```bash
+uvicorn server:app --app-dir gpt --port 8000
+curl -N localhost:8000/generate/stream -H "content-type: application/json" -d '{"prompt": "ROMEO:
+", "max_new_tokens": 200}'
+```
+
+Or in Docker (CPU-only PyTorch, the model is downloaded on start):
+
+```bash
+docker build -t tiny-gpt .
+docker run -p 8000:8000 tiny-gpt
+```
+
+`BATCHING=0` switches request batching off.
+
+### Scripts
 
 From the project root:
 
@@ -81,6 +134,9 @@ From the project root:
 | --- | --- | --- |
 | `python gpt/train.py` | Trains the GPT, writes text before and after, saves `gpt/gpt.pt`, shows the loss and attention plots | About 20 min on a CPU |
 | `python gpt/generate.py` | Writes 500 characters with the saved model | Seconds |
+| `python gpt/evaluate.py` | Val and test loss over the whole texts, the same every run | About 2 min |
+| `python gpt/benchmark.py` | Checks the KV cache and measures characters per second | A few minutes |
+| `python gpt/loadtest.py` | Load test against a running server | A few minutes |
 | `python gpt/compare.py` | Trains six models, switching on one transformer piece at a time | About 15 min |
 | `python gpt/data/prepare.py` | Rebuilds `gpt/data/extra.txt` from Project Gutenberg | Seconds |
 

@@ -1095,6 +1095,76 @@ if cache is not None:
 - **`no_grad` alone made no measurable difference.** Without it PyTorch keeps what a backward pass would need, but for one sequence at a time that is small. It is on anyway, because generating never needs gradients.
 - 58 characters per second is still slow, because each step runs 36 small heads one after another in Python. On a CPU, at this size, the Python overhead is now a large share of the time.
 
+## Serving the model (`server.py`, `batcher.py`, `loadtest.py`, `Dockerfile`)
+
+### The server
+
+`uvicorn server:app --app-dir gpt --port 8000` starts a FastAPI server that loads the model once:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /health` | Model size, and whether batching is on |
+| `POST /generate` | `{"prompt": "ROMEO:
+", "max_new_tokens": 200, "seed": 1}`, the whole text at once |
+| `POST /generate/stream` | The same request, the characters arrive one by one while they are made |
+
+- A prompt with characters the model does not know (the 65) gets a 400 that names them. `max_new_tokens` above 1,000 gets a 422.
+- Every request gets its own `torch.Generator`, so a seed gives the same text every time, even with other requests running at the same time. With one shared random state, requests running together would take numbers from each other.
+- The endpoints are plain `def`, not `async def`. Generating keeps the CPU busy, and FastAPI runs plain `def` endpoints in a pool of threads, so one long request does not block the others.
+
+### The load test
+
+`python gpt/loadtest.py` sends 1, 2, 4, 8 and 16 streaming requests at once (200 characters each) and measures the time to the first character, the total time per request, and the characters per second for all users together.
+
+**Without batching** every request runs its own forward passes on its own thread:
+
+| Users at once | First character p50 | Total p50 | Characters/second, all users |
+| --- | --- | --- | --- |
+| 1 | 0.02 s | 3.3 s | 60 |
+| 2 | 0.31 s | 4.9 s | 82 |
+| 4 | 0.07 s | 16.0 s | 49 |
+| 8 | 0.27 s | 31.3 s | 51 |
+| 16 | 0.39 s | 79.1 s | 40 |
+
+The laptop has 4 cores, and every forward pass already uses all 4. With more users the threads fight over the same cores, so the server gets *slower* overall: 82 characters per second with 2 users, 40 with 16.
+
+### Batching (`batcher.py`)
+
+The requests wait in a queue. One worker thread takes everything that arrives within 10 ms (up to 8 requests) and makes the next character for all of them in **one forward pass of batch size B**. A batch of 8 costs much less than 8 batches of 1, because the weights are read once for all 8 rows and the Python overhead of the 36 heads is paid once.
+
+- **Different prompt lengths:** a batch is one tensor, so the shorter prompts are **padded on the left**. `pad_mask` marks the padding so no real character listens to it (padding may listen to earlier padding, otherwise its row would be all `-inf` and softmax would give NaN). `pos` gives every row its own positions, so every prompt starts at position 0.
+- **Finished requests leave the batch:** their rows are cut out of the cache, so the rest get faster.
+- **Each row samples with its own request's generator**, so the text does not depend on who else is in the batch.
+- **Checked:** four prompts of 1, 7, 10 and 50 characters, generated together in one batch, give exactly the same text as each one generated alone.
+
+| Users at once | First character p50 | First character p95 | Total p50 | Characters/second, all users |
+| --- | --- | --- | --- | --- |
+| 1 | 0.05 s | 0.05 s | 3.4 s | 58 |
+| 2 | 0.05 s | 0.05 s | 4.1 s | 97 |
+| 4 | 0.06 s | 4.49 s | 4.5 s | 96 |
+| 8 | 4.56 s | 4.57 s | 10.1 s | 159 |
+| 16 | 5.48 s | 11.57 s | 11.5 s | 182 |
+
+- **4.5 times the throughput with 16 users** (182 against 40 characters per second), and the typical request finishes in 11.5 s instead of 79 s.
+- **The cost is the wait for the first character.** This is static batching: a batch runs until all its requests are done. A request that misses the 10 ms window waits for the whole running batch to finish (4 to 11 s), even though it would only need a slot. The fix is **continuous batching**: let a new request join a running batch at the next step, by prefilling it on its own and padding its cache to the batch's length.
+- With one user, batching costs a little (58 against 60 characters per second): the 10 ms wait and the extra bookkeeping.
+- `BATCHING=0` switches it off.
+
+These numbers come from one run each on a laptop that was also running other programs. Two runs of the unbatched test gave 57 and 40 characters per second for 16 users, so read them as rough, but the gap between batched and unbatched is far bigger than that.
+
+### Docker
+
+```
+docker build -t tiny-gpt .
+docker run -p 8000:8000 tiny-gpt
+```
+
+- The base is `python:3.13-slim` with the **CPU-only** PyTorch wheel, a fraction of the size of the default one with GPU libraries.
+- Only the four files the server needs are copied in (`model.py`, `checkpoint.py`, `batcher.py`, `server.py`), not the training data.
+- The model is not in the image. On start, `checkpoint.py` downloads it from the GitHub release, or a local one can be mounted: `docker run -p 8000:8000 -v "$PWD/gpt/gpt.pt:/app/gpt/gpt.pt" tiny-gpt`.
+- The image is 1.39 GB, almost all of it PyTorch.
+- Tested with the local model mounted: `/health`, `/generate` (the same text as the local server for the same seed) and the 400 for unknown characters all work. The load test against the container (batching on) gave 58 characters per second for 1 user and 187 for 16, the same as running the server directly.
+
 ## Batching the heads (tried, not kept)
 
 The heads in `MultiHeadAttention` run one after another in a Python loop. The idea was that doing all of them at once would make every step faster.
@@ -1142,6 +1212,7 @@ Time for one training step:
 
 Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, 4.5 times more training text, 10,000 steps on the GPU (val loss 1.30), and a higher learning rate that decays (val loss 1.27).
 
-1. The GPU model is at 1.2715. The val loss was still improving at the end, so a longer run with the same schedule (for example 15,000 steps) is the cheapest next try.
-2. More text again: all of Shakespeare's plays are already used, so it would have to be other authors.
-3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
+1. The GPU model is at 1.27 to 1.28. The val loss was still improving at the end, so a longer run with the same schedule (for example 15,000 steps) is the cheapest next try, once there is GPU time again.
+2. Continuous batching: let a new request join a running batch instead of waiting for it to finish (see "Serving the model").
+3. More text again: all of Shakespeare's plays are already used, so it would have to be other authors.
+4. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.

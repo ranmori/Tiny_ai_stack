@@ -1,0 +1,9 @@
+.venv
+.git
+**/__pycache__
+*.pt
+*.zip
+gpt/data
+gpt/plot_*.png
+autograd
+evals

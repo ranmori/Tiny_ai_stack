@@ -25,9 +25,11 @@ class Head(nn.Module):
         # dropout: while training, randomly switch off some of the attention weights (see the note above Block)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, cache=None):
+    def forward(self, x, cache=None, pad_mask=None):
         # x is (B, T, n_embd)
         # cache (only while generating): a list [k, v] with the keys and values of every character before x
+        # pad_mask (only for batches of prompts with different lengths, see batcher.py): (B, Tk), True where the
+        # position is padding, so no real character listens to it
         B, T, C = x.shape
         k = self.key(x)   # (B, T, head_size)
         q = self.query(x) # (B, T, head_size)
@@ -45,6 +47,11 @@ class Head(nn.Module):
         # block the future: the T queries are the last T of the Tk positions, so take those rows of tril
         # without a cache Tk == T and this is tril[:T, :T], cut down because the context can be shorter than block_size
         wei = wei.masked_fill(self.tril[Tk - T:Tk, :Tk] == 0, float('-inf'))
+        if pad_mask is not None:
+            # real characters never listen to padding
+            # padding itself may listen to the padding before it, otherwise its whole row would be -inf and softmax gives NaN
+            query_is_pad = pad_mask[:, Tk - T:] # (B, T)
+            wei = wei.masked_fill(pad_mask[:, None, :] & ~query_is_pad[:, :, None], float('-inf'))
         # each row becomes weights that add up to 1
         wei = F.softmax(wei, dim=-1)
         # keep a copy of the weights so they can be plotted, detach so it carries no gradient information
@@ -69,12 +76,12 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(n_embd, n_embd)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, cache=None):
+    def forward(self, x, cache=None, pad_mask=None):
         # every head gets the same x and gives back (B, T, head_size)
         # cat glues the results together along the last dimension:
         # 4 heads of 8 numbers each -> 32 numbers per position, the same size as n_embd
         # cache: one [k, v] per head, or None
-        out = torch.cat([h(x, None if cache is None else cache[i]) for i, h in enumerate(self.heads)], dim=-1)
+        out = torch.cat([h(x, None if cache is None else cache[i], pad_mask) for i, h in enumerate(self.heads)], dim=-1)
         out = self.dropout(self.proj(out))
         return out
 
@@ -131,9 +138,9 @@ class Block(nn.Module):
         self.ln1 = nn.LayerNorm(n_embd) if layer_norm else nn.Identity()
         self.ln2 = nn.LayerNorm(n_embd) if layer_norm else nn.Identity()
 
-    def forward(self, x, cache=None):
+    def forward(self, x, cache=None, pad_mask=None):
         # talk: normalize, then attention
-        out = self.sa(self.ln1(x), cache)
+        out = self.sa(self.ln1(x), cache, pad_mask)
         # residual: add the result on top of x instead of replacing x
         x = x + out if self.residual else out
         # think: normalize, then feed forward
@@ -165,14 +172,18 @@ class GPTLanguageModel(nn.Module):
         # lm_head (language model head) turns the n_embd numbers back into one score per character
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
-    def forward(self, idx, targets=None, cache=None, start_pos=0):
+    def forward(self, idx, targets=None, cache=None, start_pos=0, pos=None, pad_mask=None):
 
         # idx and targets are both (B,T) tensor of integers
         # cache and start_pos are only used while generating with a kv cache (see generate_stream):
         # cache holds one [k, v] per head per block, start_pos is the position of the first character in idx
         B, T = idx.shape
         tok_emb = self.token_embedding_table(idx) # (B,T,n_embd) what each character is
-        pos_emb = self.position_embedding_table(torch.arange(start_pos, start_pos + T, device=idx.device)) # (T,n_embd) where each character sits
+        # pos and pad_mask are only for batches of prompts with different lengths (batcher.py):
+        # pos (B,T) gives every row its own positions, pad_mask (B, Tk) marks the padding
+        if pos is None:
+            pos = torch.arange(start_pos, start_pos + T, device=idx.device)
+        pos_emb = self.position_embedding_table(pos) # (T,n_embd) or (B,T,n_embd), where each character sits
         # add them, pos_emb is broadcast across the batch so every chunk gets the same position vectors
         x = tok_emb + pos_emb # (B,T,n_embd)
         # through every block in turn: gather from the positions before, then think
@@ -180,7 +191,7 @@ class GPTLanguageModel(nn.Module):
             x = self.blocks(x) # (B,T,n_embd)
         else:
             for block, block_cache in zip(self.blocks, cache):
-                x = block(x, block_cache)
+                x = block(x, block_cache, pad_mask)
         x = self.ln_f(x) # (B,T,n_embd)
         logits = self.lm_head(x) # (B,T,vocab_size) [4,8,65]
 
