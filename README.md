@@ -64,6 +64,9 @@ Every play is already used for training or val, so the poems are the only Shakes
 | Model | Val | Test (poems) |
 | --- | --- | --- |
 | Fixed learning rate 3e-4, 10,000 steps | 1.2958 | 1.3566 |
+| **Learning rate from 6e-4, decaying** (the released model) | **1.2751** | **1.3370** |
+
+The better learning rate lowered val and test by the same amount (0.021 and 0.020). If it had only fitted the val text better, the test loss would not have moved.
 
 For comparison, the best possible bigram (real character-pair frequencies from the training text) scores 2.46 on val.
 

@@ -1044,9 +1044,11 @@ Every choice so far (dropout, learning rate, how long to train, which checkpoint
 | Model | Val (whole text) | Test (poems) |
 | --- | --- | --- |
 | Fixed 3e-4, 10,000 steps (`train.py` estimate: 1.2970) | 1.2958 | 1.3566 |
+| 6e-4 with decay, 10,000 steps (one of the two runs, estimates 1.2715 and 1.2766) | **1.2751** | **1.3370** |
 
 - The exact val loss (1.2958) is close to the estimate from random batches (1.2970).
 - The poems score 0.06 worse than the val plays: a different style, but no collapse. The model learned Shakespeare's English, not just the play format.
+- **The learning rate gain is real on the test set too:** val went down 0.021 and test 0.020. If the new schedule had only been tuned to the val text, the test loss would have stayed put.
 - The test number is measured once per model and never used to choose anything. Otherwise it would become a second val set.
 
 ## KV cache (`model.py`, `benchmark.py`)
