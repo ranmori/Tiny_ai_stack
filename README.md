@@ -14,7 +14,7 @@ VOLUMNIA:
 I have heard good slander, sir: it is comfort, sir!
 ```
 
-*Text written by the best model so far (10.8 million parameters, val loss 1.30).*
+*Text written by a 10.8 million parameter model (val loss 1.30).*
 
 ## What is in here
 
@@ -37,13 +37,14 @@ Validation loss (cross entropy, lower is better) on the same held-out text, the 
 | Scaled up on a laptop CPU (context 64, size 64) | 161,985 | 1.66 |
 | Tutorial size on a GPU (context 256, size 384, 6 blocks) | 10.8 M | 1.48 |
 | + 4.5 times more training text | 10.8 M | 1.37 |
-| + 10,000 steps instead of 5,000 | 10.8 M | **1.30** |
+| + 10,000 steps instead of 5,000 | 10.8 M | 1.30 |
+| + learning rate starting at 6e-4 and decaying | 10.8 M | **1.27** |
 
 Some things that were tried and measured, but not kept:
 
 - **More dropout** (0.3 instead of 0.2) shrank the train/val gap but did not lower the val loss.
 - **Running all attention heads in one matrix multiply** was only 3% faster on the GPU.
-- **Learning rate decay** from the same starting rate made the result worse, because the model was still improving.
+- **Learning rate decay** from the same starting rate made the result worse, because the model was still improving. It only helped together with a higher start.
 
 The biggest single win was **more data**. The model had stopped improving with 1 million characters, so `gpt/data/prepare.py` adds 29 more Shakespeare plays from Project Gutenberg and leaves out the plays the validation text comes from.
 

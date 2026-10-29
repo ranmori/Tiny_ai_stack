@@ -275,7 +275,7 @@ try:
 except ImportError:
     in_notebook = False
 # the best val loss of the earlier run with the same settings, drawn as a line to beat
-target = 1.2970 if device == 'cuda' else 1.6566
+target = 1.2715 if device == 'cuda' else 1.6566
 # display_id=True gives back a handle, handle.update() swaps the picture in place instead of adding a new one each time
 live_graph = None
 

@@ -1011,6 +1011,26 @@ Decay usually comes with a higher starting learning rate. The GPU run now starts
 
 For the first half of the run the steps are bigger than the fixed 3e-4, so the model should learn faster early on, and the small steps only come at the end. The fixed-rate run gave 1.2970, and running it again gave 1.2975, so the two runs of the same settings differ by about 0.0005. A result has to beat 1.297 by clearly more than that to count.
 
+### Results: a higher start with decay works
+
+| Step | Fixed 3e-4 | Decay from 3e-4 | Decay from 6e-4 | Learning rate (6e-4 run) |
+| --- | --- | --- | --- | --- |
+| 1,000 | 1.7362 | 1.7367 | **1.6294** | 5.9e-4 |
+| 2,500 | 1.4882 | 1.4944 | **1.4149** | 5.2e-4 |
+| 5,000 | 1.3686 | 1.3772 | **1.3173** | 3.3e-4 |
+| 7,500 | 1.3236 | 1.3399 | **1.2831** | 1.4e-4 |
+| 9,500 | 1.2996 | 1.3221 | **1.2715** (best) | 0.6e-4 |
+| 10,000 | 1.2975 | 1.3282 | 1.2794 | 0.6e-4 |
+
+- **Best val loss 1.2715**, against 1.297 with the fixed rate. A gain of 0.026, about 50 times the 0.0005 difference between two identical runs, so it is real.
+- **Ahead at every estimate.** The bigger steps at the start did most of the work: by step 1,000 this run was already 0.11 ahead. It reached the old final result (1.297) around step 6,000, so the same result now takes 40% fewer steps.
+- **The small steps at the end did their job too.** The val loss kept improving while the rate dropped below 1e-4, where the decay-from-3e-4 run had stalled.
+- **The gap is a bit bigger** (train 1.09, val 1.27, gap 0.18 at the best step). Faster learning also means faster memorizing.
+- **The last estimate went up again** (1.2715 to 1.2794). Early stopping keeps the step 9,500 model, so that does not matter.
+- **Kept:** `train.py` uses a 6e-4 start with decay on the GPU.
+
+Lesson from the two decay runs: decay is not a free improvement on its own. It pays off together with a higher start, because then the early steps are bigger than before and the late steps smaller.
+
 ## Batching the heads (tried, not kept)
 
 The heads in `MultiHeadAttention` run one after another in a Python loop. The idea was that doing all of them at once would make every step faster.
@@ -1056,8 +1076,8 @@ Time for one training step:
 
 ## Next steps
 
-Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, 4.5 times more training text, and 10,000 steps on the GPU (val loss 1.30).
+Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, 4.5 times more training text, 10,000 steps on the GPU (val loss 1.30), and a higher learning rate that decays (val loss 1.27).
 
-1. Run the GPU model with a 6e-4 start and decay on Kaggle (see "Next run: a higher start with decay") and compare with 1.297.
+1. The GPU model is at 1.2715. The val loss was still improving at the end, so a longer run with the same schedule (for example 15,000 steps) is the cheapest next try.
 2. More text again: all of Shakespeare's plays are already used, so it would have to be other authors.
 3. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
