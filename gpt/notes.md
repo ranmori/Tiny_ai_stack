@@ -1049,6 +1049,52 @@ Every choice so far (dropout, learning rate, how long to train, which checkpoint
 - The poems score 0.06 worse than the val plays: a different style, but no collapse. The model learned Shakespeare's English, not just the play format.
 - The test number is measured once per model and never used to choose anything. Otherwise it would become a second val set.
 
+## KV cache (`model.py`, `benchmark.py`)
+
+### The problem
+
+`generate` used to run the whole context (up to 256 characters) through the model for every new character, then throw away every prediction except the last one. But the keys and values of the earlier characters never change: a character's key and value only depend on that character and the ones before it. So for each new character the model recomputed 255 sets of keys and values it already had.
+
+The cost per character grows with the context length T. Attention compares every position with every other, so the work per new character is about T x T, and the whole text costs about T x T x (number of characters).
+
+### The fix
+
+Keep the keys and values: a **kv cache**, one `[k, v]` pair per head per block.
+
+```python
+if cache is not None:
+    if cache[0] is not None:
+        k = torch.cat([cache[0], k], dim=1)   # old keys + the new one
+        v = torch.cat([cache[1], v], dim=1)
+    cache[0], cache[1] = k, v
+```
+
+- **Prefill:** the prompt goes through once, in one pass, and fills the cache.
+- **Every step after that:** only the newest character goes through the model. Its query looks at all the stored keys, so the work per character is about T instead of T x T.
+- **Positions:** the newest character needs its real position, so `forward` takes `start_pos` and uses `torch.arange(start_pos, start_pos + T)` for the position embeddings.
+- **The mask:** the T new queries are the last T of the Tk positions, so the mask is `tril[Tk - T:Tk, :Tk]`. Without a cache Tk == T and that is the old `tril[:T, :T]`. With one new character it is a single row of ones: it may look at everything before it.
+- **When the context is full:** the position table only has 256 rows. Without a cache the context is cut to the last 256 characters every step, which shifts every position by one. A cache cannot shift the positions of what it already stored, so when it is full it starts again from the last 128 characters. Up to 256 characters the text is exactly the same as without a cache. After that it is different, but just as valid.
+- `generate_stream` **yields** each character as soon as it is made (used by the server). `generate` is now a loop over it, so `train.py` and `generate.py` did not change.
+
+### Is it still the same model?
+
+`benchmark.py` checks two things before measuring anything:
+
+- The logits for 256 positions, all at once without a cache against one at a time with a cache: largest difference **1.3e-05**, just the order floating point numbers are added in.
+- With the same seed, the first 255 generated characters are **identical** with and without the cache.
+
+### How much faster (laptop CPU, 4 threads, 10.8M parameter model, median of 3 runs)
+
+| Method | 250 characters | 1,000 characters |
+| --- | --- | --- |
+| Before: no cache, no `no_grad` | 16 per second | |
+| No cache, with `no_grad` | 16 per second | 10 per second |
+| **KV cache** | **60 per second** | **58 per second** |
+
+- **3.8 times faster for 250 characters, 5.5 times for 1,000.** The longer the text, the bigger the gain: without a cache it slows down as the context fills up (16 to 10 per second), with a cache the speed stays the same.
+- **`no_grad` alone made no measurable difference.** Without it PyTorch keeps what a backward pass would need, but for one sequence at a time that is small. It is on anyway, because generating never needs gradients.
+- 58 characters per second is still slow, because each step runs 36 small heads one after another in Python. On a CPU, at this size, the Python overhead is now a large share of the time.
+
 ## Batching the heads (tried, not kept)
 
 The heads in `MultiHeadAttention` run one after another in a Python loop. The idea was that doing all of them at once would make every step faster.

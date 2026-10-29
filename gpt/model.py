@@ -25,15 +25,26 @@ class Head(nn.Module):
         # dropout: while training, randomly switch off some of the attention weights (see the note above Block)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x, cache=None):
         # x is (B, T, n_embd)
+        # cache (only while generating): a list [k, v] with the keys and values of every character before x
         B, T, C = x.shape
         k = self.key(x)   # (B, T, head_size)
         q = self.query(x) # (B, T, head_size)
+        v = self.value(x) # (B, T, head_size)
+        # kv cache: the keys and values of earlier characters never change, so keep them instead of recomputing them
+        # the new characters' k and v go on the end, and only the new characters need a query
+        if cache is not None:
+            if cache[0] is not None:
+                k = torch.cat([cache[0], k], dim=1) # (B, Tk, head_size), Tk = earlier characters + T
+                v = torch.cat([cache[1], v], dim=1)
+            cache[0], cache[1] = k, v
+        Tk = k.shape[1]
         # the score between every pair of positions, divided by the square root of head_size to keep it small
-        wei = q @ k.transpose(-2, -1) * k.shape[-1]**-0.5 # (B, T, head_size) @ (B, head_size, T) -> (B, T, T)
-        # block the future, tril is cut down to T by T because while generating the context can be shorter than block_size
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = q @ k.transpose(-2, -1) * k.shape[-1]**-0.5 # (B, T, head_size) @ (B, head_size, Tk) -> (B, T, Tk)
+        # block the future: the T queries are the last T of the Tk positions, so take those rows of tril
+        # without a cache Tk == T and this is tril[:T, :T], cut down because the context can be shorter than block_size
+        wei = wei.masked_fill(self.tril[Tk - T:Tk, :Tk] == 0, float('-inf'))
         # each row becomes weights that add up to 1
         wei = F.softmax(wei, dim=-1)
         # keep a copy of the weights so they can be plotted, detach so it carries no gradient information
@@ -41,8 +52,7 @@ class Head(nn.Module):
         # randomly stop some positions from talking to each other, only while training
         wei = self.dropout(wei)
         # each position collects the values of the positions it listens to
-        v = self.value(x) # (B, T, head_size)
-        out = wei @ v     # (B, T, T) @ (B, T, head_size) -> (B, T, head_size)
+        out = wei @ v     # (B, T, Tk) @ (B, Tk, head_size) -> (B, T, head_size)
         return out
 
 
@@ -59,11 +69,12 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(n_embd, n_embd)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x, cache=None):
         # every head gets the same x and gives back (B, T, head_size)
         # cat glues the results together along the last dimension:
         # 4 heads of 8 numbers each -> 32 numbers per position, the same size as n_embd
-        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        # cache: one [k, v] per head, or None
+        out = torch.cat([h(x, None if cache is None else cache[i]) for i, h in enumerate(self.heads)], dim=-1)
         out = self.dropout(self.proj(out))
         return out
 
@@ -120,9 +131,9 @@ class Block(nn.Module):
         self.ln1 = nn.LayerNorm(n_embd) if layer_norm else nn.Identity()
         self.ln2 = nn.LayerNorm(n_embd) if layer_norm else nn.Identity()
 
-    def forward(self, x):
+    def forward(self, x, cache=None):
         # talk: normalize, then attention
-        out = self.sa(self.ln1(x))
+        out = self.sa(self.ln1(x), cache)
         # residual: add the result on top of x instead of replacing x
         x = x + out if self.residual else out
         # think: normalize, then feed forward
@@ -154,16 +165,22 @@ class GPTLanguageModel(nn.Module):
         # lm_head (language model head) turns the n_embd numbers back into one score per character
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, cache=None, start_pos=0):
 
         # idx and targets are both (B,T) tensor of integers
+        # cache and start_pos are only used while generating with a kv cache (see generate_stream):
+        # cache holds one [k, v] per head per block, start_pos is the position of the first character in idx
         B, T = idx.shape
         tok_emb = self.token_embedding_table(idx) # (B,T,n_embd) what each character is
-        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (T,n_embd) where each character sits
+        pos_emb = self.position_embedding_table(torch.arange(start_pos, start_pos + T, device=idx.device)) # (T,n_embd) where each character sits
         # add them, pos_emb is broadcast across the batch so every chunk gets the same position vectors
         x = tok_emb + pos_emb # (B,T,n_embd)
         # through every block in turn: gather from the positions before, then think
-        x = self.blocks(x) # (B,T,n_embd)
+        if cache is None:
+            x = self.blocks(x) # (B,T,n_embd)
+        else:
+            for block, block_cache in zip(self.blocks, cache):
+                x = block(x, block_cache)
         x = self.ln_f(x) # (B,T,n_embd)
         logits = self.lm_head(x) # (B,T,vocab_size) [4,8,65]
 
@@ -181,23 +198,58 @@ class GPTLanguageModel(nn.Module):
 
         return logits, loss
 
-    def generate(self, idx, max_new_tokens):
+    def new_cache(self):
+        # an empty kv cache: for every block, for every head, a [keys, values] pair that starts empty
+        return [[[None, None] for _ in block.sa.heads] for block in self.blocks]
+
+    # no_grad: generating is not training, nothing needs to be remembered for backward
+    @torch.no_grad()
+    def generate_stream(self, idx, max_new_tokens, use_cache=True, generator=None):
+        # like generate, but hands out every new character as soon as it is made (yield), for streaming
         # idx is (B, T) array of indices in the current context
-        for _ in range(max_new_tokens): # _ i dont need the count and new characters
-            # the position table only has block_size rows, so only the last block_size characters can go in
-            idx_cond = idx[:, -self.block_size:]
-            # get the predictions
-            # self(idx_cond) calls forward(idx_cond) (that's the nn.Module magic).
-            # No targets passed, so loss comes back None.
-            # logits has shape (B, T, C) — a prediction for every position in the sequence so far, not just the last one
-            logits, loss = self(idx_cond)
-            # focus only on the last time step
-            logits = logits[:, -1, :] # becomes (B, C)
-            # apply softmax to get probabilities
-            probs = F.softmax(logits, dim=-1) # (B, C)
-            # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
+        # generator: an optional torch.Generator for the random sampling, so a server can give every request its own seed
+        #
+        # without a cache every new character runs the whole context through the model again,
+        # so the work per character grows with the length of the context
+        # with a kv cache only the newest character goes through the model, its query looks at the stored keys and values
+        #
+        # the position table only has block_size rows, so the context can only be block_size characters long
+        # without a cache the context is cut to the last block_size characters every step, so every position shifts by one
+        # a cache can not shift the positions of what it stored, so when it is full it starts again from the last
+        # block_size // 2 characters: the text is exactly the same as without a cache up to block_size characters,
+        # and different (but just as valid) after that
+        cache = None
+        refill = False
+        pos = 0
+        for _ in range(max_new_tokens):
+            if not use_cache:
+                # the old way: the whole context through the model, every time
+                logits, _ = self(idx[:, -self.block_size:])
+            elif cache is None:
+                # the first step, or the cache just ran full: fill a new cache with the context (the prefill)
+                context = idx[:, -(self.block_size // 2):] if refill else idx[:, -self.block_size:]
+                cache = self.new_cache()
+                logits, _ = self(context, cache=cache, start_pos=0)
+                pos = context.shape[1]
+            else:
+                # only the newest character, at the next position, the rest comes from the cache
+                logits, _ = self(idx[:, -1:], cache=cache, start_pos=pos)
+                pos += 1
+            # focus only on the last time step, turn it into probabilities and sample from them
+            probs = F.softmax(logits[:, -1, :], dim=-1) # (B, C)
+            idx_next = torch.multinomial(probs, num_samples=1, generator=generator) # (B, 1)
             # append sampled index to the running sequence
+            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
+            yield idx_next
+            # the next character would need position block_size, which does not exist: start a new cache
+            if use_cache and pos == self.block_size:
+                cache = None
+                refill = True
+
+    def generate(self, idx, max_new_tokens, use_cache=True, generator=None):
+        # idx is (B, T) array of indices in the current context
+        # gives back idx with max_new_tokens new characters added, see generate_stream for how they are made
+        for idx_next in self.generate_stream(idx, max_new_tokens, use_cache, generator):
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
 
