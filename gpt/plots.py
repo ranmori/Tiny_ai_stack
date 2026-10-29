@@ -20,7 +20,7 @@ def draw_loss(ax, losses, vocab_size, eval_steps=(), eval_train=(), eval_val=(),
     ax.axhline(guessing, color='gray', linestyle='--', label=f'pure guessing ({guessing:.2f})')
     # the val loss of an earlier model, the number this one has to beat
     if baseline is not None:
-        ax.axhline(baseline, color='black', linestyle=':', label=f'bigram val loss ({baseline:.2f})')
+        ax.axhline(baseline, color='black', linestyle=':', label=f'best bigram on this data ({baseline:.2f})')
     ax.set_title('loss')
     ax.set_xlabel('step')
     ax.set_ylabel('cross entropy')

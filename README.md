@@ -38,7 +38,9 @@ Validation loss (cross entropy, lower is better) on the same held-out text, the 
 | Tutorial size on a GPU (context 256, size 384, 6 blocks) | 10.8 M | 1.48 |
 | + 4.5 times more training text | 10.8 M | 1.37 |
 | + 10,000 steps instead of 5,000 | 10.8 M | 1.30 |
-| + learning rate starting at 6e-4 and decaying | 10.8 M | **1.27** |
+| + learning rate starting at 6e-4 and decaying | 10.8 M | **1.27 to 1.28** (two runs) |
+
+Two runs with identical settings end about 0.005 apart (the GPU adds numbers in a slightly different order each time), so differences smaller than that mean nothing. Every setting above was chosen by looking at this val loss, so it is a little optimistic. See [Evaluation](#evaluation) for a test set that was never used for any choice.
 
 Some things that were tried and measured, but not kept:
 
@@ -47,6 +49,23 @@ Some things that were tried and measured, but not kept:
 - **Learning rate decay** from the same starting rate made the result worse, because the model was still improving. It only helped together with a higher start.
 
 The biggest single win was **more data**. The model had stopped improving with 1 million characters, so `gpt/data/prepare.py` adds 29 more Shakespeare plays from Project Gutenberg and leaves out the plays the validation text comes from.
+
+## Evaluation
+
+`python gpt/evaluate.py` scores the saved model on two texts, going through each one completely in fixed windows, so the result is the same every run:
+
+| Text | What it is | Used to choose settings? |
+| --- | --- | --- |
+| Val | The end of *The Taming of the Shrew* and *The Tempest* (111,540 characters) | Yes |
+| Test | Shakespeare's poems: the Sonnets, *Venus and Adonis*, *The Rape of Lucrece* and three short ones (265,764 characters) | Never |
+
+Every play is already used for training or val, so the poems are the only Shakespeare the model never saw. They are verse without speakers, a different style from the plays, so the test loss is not comparable with the val loss. Only 0.11% of their 6-word runs appear anywhere in the training text.
+
+| Model | Val | Test (poems) |
+| --- | --- | --- |
+| Fixed learning rate 3e-4, 10,000 steps | 1.2958 | 1.3566 |
+
+For comparison, the best possible bigram (real character-pair frequencies from the training text) scores 2.46 on val.
 
 ## Running it
 

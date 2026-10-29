@@ -1009,7 +1009,7 @@ Decay usually comes with a higher starting learning rate. The GPU run now starts
 | 7,500 | 1.4e-4 |
 | 10,000 | 0.6e-4 |
 
-For the first half of the run the steps are bigger than the fixed 3e-4, so the model should learn faster early on, and the small steps only come at the end. The fixed-rate run gave 1.2970, and running it again gave 1.2975, so the two runs of the same settings differ by about 0.0005. A result has to beat 1.297 by clearly more than that to count.
+For the first half of the run the steps are bigger than the fixed 3e-4, so the model should learn faster early on, and the small steps only come at the end. The fixed-rate run gave 1.2970, and running it again gave 1.2975. (Two runs of the 6e-4 setting later differed by 0.005, so 0.0005 was luck: the real run-to-run noise is about 0.005, see below.)
 
 ### Results: a higher start with decay works
 
@@ -1022,7 +1022,7 @@ For the first half of the run the steps are bigger than the fixed 3e-4, so the m
 | 9,500 | 1.2996 | 1.3221 | **1.2715** (best) | 0.6e-4 |
 | 10,000 | 1.2975 | 1.3282 | 1.2794 | 0.6e-4 |
 
-- **Best val loss 1.2715**, against 1.297 with the fixed rate. A gain of 0.026, about 50 times the 0.0005 difference between two identical runs, so it is real.
+- **Best val loss 1.2715**, against 1.297 with the fixed rate. A second run with exactly the same settings gave **1.2766**, so identical runs differ by about 0.005 (the GPU adds numbers in a slightly different order each time, and the small differences grow over 10,000 steps). Over two runs each: fixed 3e-4 = 1.2970 / 1.2975, 6e-4 with decay = 1.2715 / 1.2766. The gain is 0.02 to 0.026, four to five times the noise, so it is real, but the honest way to state the result is **1.27 to 1.28**, not 1.2715.
 - **Ahead at every estimate.** The bigger steps at the start did most of the work: by step 1,000 this run was already 0.11 ahead. It reached the old final result (1.297) around step 6,000, so the same result now takes 40% fewer steps.
 - **The small steps at the end did their job too.** The val loss kept improving while the rate dropped below 1e-4, where the decay-from-3e-4 run had stalled.
 - **The gap is a bit bigger** (train 1.09, val 1.27, gap 0.18 at the best step). Faster learning also means faster memorizing.
@@ -1030,6 +1030,24 @@ For the first half of the run the steps are bigger than the fixed 3e-4, so the m
 - **Kept:** `train.py` uses a 6e-4 start with decay on the GPU.
 
 Lesson from the two decay runs: decay is not a free improvement on its own. It pays off together with a higher start, because then the early steps are bigger than before and the late steps smaller.
+
+## Measuring honestly: val, test and noise (`evaluate.py`)
+
+Every choice so far (dropout, learning rate, how long to train, which checkpoint to keep) was made by looking at the val loss. So the best val number is a little optimistic: it is the best of several tries, all scored on the same text. Three fixes:
+
+1. **Noise.** Two runs of exactly the same settings differ by about 0.005 (see the decay results). Differences smaller than that mean nothing.
+2. **A test set that was never used for any choice.** Every play is already used for training or val. The only Shakespeare left are the **poems** (the Sonnets, Venus and Adonis, The Rape of Lucrece and three short ones), which `prepare.py` always skipped. It now writes them to `gpt/data/test.txt`: 265,764 characters, and only 0.11% of their 6-word runs appear anywhere in the training text. Poems are verse without speakers, a different style from the plays, so the test loss is not comparable with the val loss. It answers one question: does the model work on Shakespeare it never saw and nobody tuned on?
+3. **The same number every time.** `estimate_loss()` in `train.py` uses 200 random batches, so it wobbles. `gpt/evaluate.py` goes through the whole val and test text in windows of `block_size` characters, one after the other, so the result is exact and repeatable.
+
+`python gpt/evaluate.py` takes under 2 minutes on the laptop CPU.
+
+| Model | Val (whole text) | Test (poems) |
+| --- | --- | --- |
+| Fixed 3e-4, 10,000 steps (`train.py` estimate: 1.2970) | 1.2958 | 1.3566 |
+
+- The exact val loss (1.2958) is close to the estimate from random batches (1.2970).
+- The poems score 0.06 worse than the val plays: a different style, but no collapse. The model learned Shakespeare's English, not just the play format.
+- The test number is measured once per model and never used to choose anything. Otherwise it would become a second val set.
 
 ## Batching the heads (tried, not kept)
 
@@ -1068,10 +1086,10 @@ Time for one training step:
 - **Stray text typed into the code.** The word `do` ended up after the colon in `if steps % 1000 == 0:`, which gave `IndentationError: unexpected indent` on the next line. The error points at the line after the real mistake.
 
 - **`data.type` without brackets** printed the method itself, not the type. It is now `data.dtype`.
+- **The bigram line in the plot was a typed-in 2.50.** `train.py` now measures it: it counts how often each character follows each other character in the training text and scores the val text with those odds (`bigram_val_loss()`). That is the best any bigram can do on this data: 2.48 on `input.txt` alone, matching the trained bigram, and 2.46 with the extra text.
 
 ## Still to fix
 
-- **The bigram line in the plot is a fixed number.** `baseline=2.50` is typed in at the bottom of `train.py`, not measured each run.
 - **`generate.py` only works with the full model now.** `train.py` saves the settings (`n_embd`, `block_size`, `n_head`, `n_layer`, `dropout`) inside `gpt/gpt.pt`, and `generate.py` rebuilds the model from them. To generate from the old bigram instead, import `BigramLanguageModel` from `bigram` and load `gpt/bigram.pt`.
 
 ## Next steps

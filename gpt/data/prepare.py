@@ -138,3 +138,26 @@ assert set(extra) <= vocab
 with open('gpt/data/extra.txt', 'w', encoding='utf-8', newline='\n') as f:
     f.write(extra)
 print(f'extra.txt: {len(extra):,} characters, input.txt: {len(tiny):,} characters')
+
+# a test set that nothing was ever tuned on: the poems
+# every play is already used for training or val, the poems are the only Shakespeare left that the model never saw
+# they are verse without speakers, so the test loss is not comparable with the val loss, it is a check on unseen text
+def clean_poem(text):
+    out = []
+    for line in text.split('\n')[1:]:          # the first line is the title
+        if re.fullmatch(r'\s*[0-9IVXLC]+\.?\s*', line):  # sonnet numbers and roman numeral headings
+            continue
+        out.append(clean_line(line))
+    text = '\n'.join(out)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip() + '\n\n'
+
+test = ''.join(clean_poem(works[t]) for t in titles if t in POEMS)
+assert set(test) <= vocab
+# the poems must not appear in the training text, check with the same 6-word runs as above
+train_shingles = tiny_shingles | shingles(extra)
+s = shingles(test)
+print(f'test.txt: {len(test):,} characters from {len(POEMS)} poems, '
+      f'{len(s & train_shingles) / len(s):.2%} of its 6-word runs also in input.txt or extra.txt')
+with open('gpt/data/test.txt', 'w', encoding='utf-8', newline='\n') as f:
+    f.write(test)

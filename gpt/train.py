@@ -366,8 +366,21 @@ m.train()
 # two windows: the attention weights of every block and head before training,
 # and the loss (with the bigram's val loss as the line to beat) next to the attention weights after training
 wei_after = attention_weights()
+
+# the line to beat: the val loss of the best possible bigram on this training text, measured instead of typed in
+# a bigram only looks at the current character, so the best it can do is the real frequencies:
+# count how often each character follows each other character in train_data, then score val_data with those odds
+def bigram_val_loss():
+    pairs = train_data[:-1] * vocab_size + train_data[1:]                  # every (current, next) pair as one number
+    counts = torch.bincount(pairs.cpu(), minlength=vocab_size * vocab_size).view(vocab_size, vocab_size).float()
+    probs = (counts + 1) / (counts + 1).sum(dim=1, keepdim=True)          # +1 so a pair never seen is not probability 0
+    v = val_data.cpu()
+    return -probs[v[:-1], v[1:]].log().mean().item()
+
+bigram = bigram_val_loss()
+print(f'best bigram val loss on this data: {bigram:.4f}')
 plot_attention_training(losses, vocab_size, eval_steps, eval_train, eval_val,
-                        wei_before, wei_after, decode(example.tolist()), baseline=2.50,
+                        wei_before, wei_after, decode(example.tolist()), baseline=bigram,
                         save_prefix='gpt/plot')
 
 # also save the final live graph as a picture, on Kaggle it can be downloaded from the file panel
