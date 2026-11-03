@@ -1,0 +1,139 @@
+{
+  "model": "gpt/gpt.pt",
+  "model_bytes": 52647035,
+  "parameters": 10788929,
+  "commit": "0837df7",
+  "quick": false,
+  "minutes": 2.49,
+  "loss": {
+    "val (end of The Shrew, The Tempest)": 1.2751,
+    "test (the poems)": 1.337
+  },
+  "bits_per_char": {
+    "val (end of The Shrew, The Tempest)": 1.8396,
+    "test (the poems)": 1.9289
+  },
+  "free_writing": {
+    "samples": 8,
+    "length": 600,
+    "model": {
+      "headings": 5.75,
+      "heading_after_blank": 0.9895833333333334,
+      "speech_lines_per_heading": 3.2232142857142856,
+      "mean_speech_line_length": 39.72617902930403,
+      "broken_colon_lines": 0.125,
+      "known_speaker_rate": 0.9508928571428571,
+      "repeat_rate_8": 0.01686340640809443,
+      "longest_repeat": 11.125,
+      "real_word_rate": 0.9774333903918543
+    },
+    "real_shakespeare": {
+      "headings": 3.75,
+      "heading_after_blank": 1.0,
+      "speech_lines_per_heading": 5.433333333333334,
+      "mean_speech_line_length": 37.653983516483514,
+      "broken_colon_lines": 1.25,
+      "known_speaker_rate": 1.0,
+      "repeat_rate_8": 0.029932546374367625,
+      "longest_repeat": 14.125,
+      "real_word_rate": 0.9898691628780276
+    }
+  },
+  "sampling_sweep": {
+    "greedy (t=0)": {
+      "headings": 13.0,
+      "heading_after_blank": 1.0,
+      "speech_lines_per_heading": 1.0769230769230769,
+      "mean_speech_line_length": 18.714285714285715,
+      "broken_colon_lines": 0.0,
+      "known_speaker_rate": 1.0,
+      "repeat_rate_8": 0.8269720101781171,
+      "longest_repeat": 308.0,
+      "real_word_rate": 1.0
+    },
+    "t=0.5": {
+      "headings": 4.25,
+      "heading_after_blank": 0.75,
+      "speech_lines_per_heading": 1.0571428571428572,
+      "mean_speech_line_length": 40.885416666666664,
+      "broken_colon_lines": 0.0,
+      "known_speaker_rate": 0.75,
+      "repeat_rate_8": 0.11513994910941475,
+      "longest_repeat": 18.0,
+      "real_word_rate": 0.9936617458279846
+    },
+    "t=0.8": {
+      "headings": 3.75,
+      "heading_after_blank": 0.9375,
+      "speech_lines_per_heading": 3.4166666666666665,
+      "mean_speech_line_length": 38.58300865800866,
+      "broken_colon_lines": 0.0,
+      "known_speaker_rate": 0.9375,
+      "repeat_rate_8": 0.028625954198473275,
+      "longest_repeat": 12.5,
+      "real_word_rate": 0.9871444481568104
+    },
+    "t=1.0 (as released)": {
+      "headings": 2.75,
+      "heading_after_blank": 1.0,
+      "speech_lines_per_heading": 4.479166666666667,
+      "mean_speech_line_length": 38.24747474747475,
+      "broken_colon_lines": 0.25,
+      "known_speaker_rate": 1.0,
+      "repeat_rate_8": 0.010814249363867684,
+      "longest_repeat": 9.5,
+      "real_word_rate": 0.9653688876026325
+    },
+    "t=1.0, top_k=10": {
+      "headings": 2.25,
+      "heading_after_blank": 0.75,
+      "speech_lines_per_heading": 2.4375,
+      "mean_speech_line_length": 40.638888888888886,
+      "broken_colon_lines": 0.75,
+      "known_speaker_rate": 0.625,
+      "repeat_rate_8": 0.015903307888040702,
+      "longest_repeat": 9.5,
+      "real_word_rate": 0.9764852523756633
+    },
+    "t=1.2": {
+      "headings": 1.5,
+      "heading_after_blank": 0.75,
+      "speech_lines_per_heading": 5.1875,
+      "mean_speech_line_length": 39.01704545454545,
+      "broken_colon_lines": 0.75,
+      "known_speaker_rate": 0.6875,
+      "repeat_rate_8": 0.0,
+      "longest_repeat": 6.75,
+      "real_word_rate": 0.9247670767954721
+    },
+    "t=1.5": {
+      "headings": 1.5,
+      "heading_after_blank": 0.75,
+      "speech_lines_per_heading": 3.75,
+      "mean_speech_line_length": 39.424107142857146,
+      "broken_colon_lines": 0.5,
+      "known_speaker_rate": 0.625,
+      "repeat_rate_8": 0.0038167938931297773,
+      "longest_repeat": 8.5,
+      "real_word_rate": 0.8732528129632283
+    }
+  },
+  "prompt_cases": {
+    "after a heading, speak": 1.0,
+    "finish the line": 1.0,
+    "after a blank line, name a speaker": 1.0,
+    "carry on with verse (measured, no pass mark)": 0.7
+  },
+  "checks": {
+    "writes speaker headings": true,
+    "headings sit after a blank line": true,
+    "uses real speaker names": true,
+    "does not loop": true,
+    "no long copied passage": true,
+    "writes real words": true,
+    "prompt: after a heading, speak": true,
+    "prompt: finish the line": true,
+    "prompt: after a blank line, name a speaker": true
+  },
+  "failed": []
+}

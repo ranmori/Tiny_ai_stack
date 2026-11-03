@@ -215,10 +215,18 @@ class GPTLanguageModel(nn.Module):
 
     # no_grad: generating is not training, nothing needs to be remembered for backward
     @torch.no_grad()
-    def generate_stream(self, idx, max_new_tokens, use_cache=True, generator=None):
+    def generate_stream(self, idx, max_new_tokens, use_cache=True, generator=None,
+                        temperature=1.0, top_k=None):
         # like generate, but hands out every new character as soon as it is made (yield), for streaming
         # idx is (B, T) array of indices in the current context
         # generator: an optional torch.Generator for the random sampling, so a server can give every request its own seed
+        #
+        # temperature divides the logits before softmax: below 1 makes the likely characters even more likely
+        # (safer, more repetitive text), above 1 flattens the odds (more surprising, more misspelling).
+        # temperature=0 means always take the most likely character, no sampling at all.
+        # top_k keeps only the k most likely characters and gives the rest no chance, which cuts off
+        # the long tail of very unlikely characters without changing the order of the rest.
+        # the defaults (1.0, None) are plain sampling from the model's own odds, exactly as before.
         #
         # without a cache every new character runs the whole context through the model again,
         # so the work per character grows with the length of the context
@@ -247,8 +255,18 @@ class GPTLanguageModel(nn.Module):
                 logits, _ = self(idx[:, -1:], cache=cache, start_pos=pos)
                 pos += 1
             # focus only on the last time step, turn it into probabilities and sample from them
-            probs = F.softmax(logits[:, -1, :], dim=-1) # (B, C)
-            idx_next = torch.multinomial(probs, num_samples=1, generator=generator) # (B, 1)
+            logits = logits[:, -1, :] # (B, C)
+            if temperature == 0:
+                # greedy: the most likely character every time, so the text is the same on every run
+                idx_next = logits.argmax(dim=-1, keepdim=True) # (B, 1)
+            else:
+                logits = logits / temperature
+                if top_k is not None:
+                    # the k-th largest logit per row is the cut: everything below it becomes -inf, so softmax gives it 0
+                    kth = logits.topk(min(top_k, logits.shape[-1]), dim=-1).values[:, -1:] # (B, 1)
+                    logits = logits.masked_fill(logits < kth, float('-inf'))
+                probs = F.softmax(logits, dim=-1) # (B, C)
+                idx_next = torch.multinomial(probs, num_samples=1, generator=generator) # (B, 1)
             # append sampled index to the running sequence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
             yield idx_next
@@ -257,10 +275,11 @@ class GPTLanguageModel(nn.Module):
                 cache = None
                 refill = True
 
-    def generate(self, idx, max_new_tokens, use_cache=True, generator=None):
+    def generate(self, idx, max_new_tokens, use_cache=True, generator=None,
+                 temperature=1.0, top_k=None):
         # idx is (B, T) array of indices in the current context
         # gives back idx with max_new_tokens new characters added, see generate_stream for how they are made
-        for idx_next in self.generate_stream(idx, max_new_tokens, use_cache, generator):
+        for idx_next in self.generate_stream(idx, max_new_tokens, use_cache, generator, temperature, top_k):
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
 

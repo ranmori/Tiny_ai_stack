@@ -22,6 +22,7 @@ I have heard good slander, sir: it is comfort, sir!
 | --- | --- | --- |
 | [`autograd/`](autograd/) | A scalar autograd engine (`Value`), a small MLP built on it, tests against PyTorch, and a two-moons classifier | [`autograd/Notes.md`](autograd/Notes.md) |
 | [`gpt/`](gpt/) | A character-level GPT in PyTorch: bigram baseline, self-attention, the full transformer, training, text generation and plots | [`gpt/notes.md`](gpt/notes.md) |
+| [`evals/`](evals/) | Evals for the text the model writes, not just the loss: play format, invented words, repetition, a temperature sweep, prompt following, all against real Shakespeare through the same graders | [`evals/notes.md`](evals/notes.md) |
 
 ## The GPT, step by step
 
@@ -69,6 +70,42 @@ Every play is already used for training or val, so the poems are the only Shakes
 The better learning rate lowered val and test by the same amount (0.021 and 0.020). If it had only fitted the val text better, the test loss would not have moved.
 
 For comparison, the best possible bigram (real character-pair frequencies from the training text) scores 2.46 on val.
+
+### What the loss does not say
+
+Cross entropy only asks how surprised the model is by text somebody else wrote. `python evals/run.py`
+measures the text the model writes itself, and runs the same graders over real held-out Shakespeare,
+so every number has something to be compared with. 8 samples of 600 characters, temperature 1.0:
+
+| | The model | Real Shakespeare |
+| --- | --- | --- |
+| Speaker headings that sit after a blank line | 99.0% | 100.0% |
+| Speaker names that are real characters | 95.1% | 100.0% |
+| Words that exist in the training text | 97.74% | 98.99% |
+| Repeated 8-character runs | 1.69% | 2.99% |
+| Longest repeated piece | 11.1 characters | 14.1 |
+| Speech lines per speaker heading | 3.22 | 5.43 |
+
+The format is learnt and the spelling is close, from a model that writes one character at a time and
+was never told where a word ends. Then the sampling setting, which the loss cannot see at all:
+
+| Setting | Real words | Repeated 8-runs | Longest repeat |
+| --- | --- | --- | --- |
+| Greedy (temperature 0) | 100.0% | **82.7%** | **308 characters** |
+| 0.8 | 98.7% | 2.9% | 12 |
+| **1.0 (as served)** | 96.5% | 1.1% | 10 |
+| 1.5 | 87.3% | 0.4% | 8 |
+| Real Shakespeare | 99.0% | 3.0% | 14 |
+
+Always taking the most likely character walks the model into a loop — one 308-character passage said
+twice in 400 characters — on a model whose loss is unchanged. Above 1.0 the spelling falls apart
+instead. 0.8 is the closest to the real text on both.
+
+The suite also puts checkpoints side by side. Against the small laptop-CPU model (val 1.66), the only
+pass mark that separates them is word-realness, 82.01% against 97.74%; both get the shape of a play
+right. And run to run, changing the sampling seed moves the structural numbers more than the
+checkpoints do, so [`evals/notes.md`](evals/notes.md) reports "it changes speaker too often" as
+unconfirmed rather than as a finding.
 
 ## Inference
 
@@ -138,6 +175,7 @@ From the project root:
 | `python gpt/train.py` | Trains the GPT, writes text before and after, saves `gpt/gpt.pt`, shows the loss and attention plots | About 20 min on a CPU |
 | `python gpt/generate.py` | Writes 500 characters with the saved model | Seconds |
 | `python gpt/evaluate.py` | Val and test loss over the whole texts, the same every run | About 2 min |
+| `python evals/run.py` | The eval suite: loss, play format, invented words, repetition, the temperature sweep, prompt following | About 2.5 min |
 | `python gpt/benchmark.py` | Checks the KV cache and measures characters per second | A few minutes |
 | `python gpt/loadtest.py` | Load test against a running server | A few minutes |
 | `python gpt/compare.py` | Trains six models, switching on one transformer piece at a time | About 15 min |

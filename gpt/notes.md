@@ -1210,6 +1210,17 @@ Time for one training step:
 
 - **`generate.py` only works with the full model now.** `train.py` saves the settings (`n_embd`, `block_size`, `n_head`, `n_layer`, `dropout`) inside `gpt/gpt.pt`, and `generate.py` rebuilds the model from them. To generate from the old bigram instead, import `BigramLanguageModel` from `bigram` and load `gpt/bigram.pt`.
 
+## Sampling settings
+
+`generate` and `generate_stream` now take `temperature` and `top_k`. The defaults (1.0 and none)
+sample from the model's own odds, exactly as before, so nothing that already worked changed.
+`temperature=0` means always take the most likely character.
+
+They were added for the eval suite in [`../evals/`](../evals/), which measures what each setting does
+to the text. The headline: greedy decoding (temperature 0) repeats 83% of its 8-character runs and
+says one 308-character passage twice, on a model whose loss is unchanged. See
+[`../evals/notes.md`](../evals/notes.md).
+
 ## Next steps
 
 Done: the bigram baseline, attention, all five transformer pieces, scaling up on the CPU, the tutorial-size model on a GPU (val loss 1.48), early stopping, 4.5 times more training text, 10,000 steps on the GPU (val loss 1.30), and a higher learning rate that decays (val loss 1.27).
@@ -1218,3 +1229,4 @@ Done: the bigram baseline, attention, all five transformer pieces, scaling up on
 2. Continuous batching: let a new request join a running batch instead of waiting for it to finish (see "Serving the model").
 3. More text again: all of Shakespeare's plays are already used, so it would have to be other authors.
 4. Try dropout on the CPU model. Its train/val gap reached 0.20 after 10,000 steps, so it may start to pay off now.
+5. Temperature 0.8 as the server's default: on the eval numbers it is the closest to real Shakespeare on both spelling and repetition. Both settings' numbers would be reported, not quietly swapped.
