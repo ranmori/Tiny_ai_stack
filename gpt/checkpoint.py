@@ -10,13 +10,16 @@ RELEASE_URL = 'https://github.com/ranmori/Tiny_ai_stack/releases/download/v1.0/g
 
 def download(path, url=RELEASE_URL):
     print(f'{path} not found, downloading the trained model from {url}')
+    printed = [0]
     def progress(blocks, block_size, total):
+        # only every 5 MB, a line per block would flood the output (and a Space's log)
         done = min(blocks * block_size, total)
-        print(f'\r  {done / 1e6:5.1f} of {total / 1e6:.1f} MB', end='', flush=True)
+        if done - printed[0] >= 5e6 or done == total:
+            printed[0] = done
+            print(f'  {done / 1e6:5.1f} of {total / 1e6:.1f} MB', flush=True)
     urllib.request.urlretrieve(url, path + '.part', reporthook=progress)
     # only rename when complete, so a broken download never looks like a model
     os.replace(path + '.part', path)
-    print()
 
 
 def load_checkpoint(path='gpt/gpt.pt'):

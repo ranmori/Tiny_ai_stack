@@ -16,6 +16,8 @@ I have heard good slander, sir: it is comfort, sir!
 
 *Text written by a 10.8 million parameter model (val loss 1.30).*
 
+**Try it in the browser:** [huggingface.co/spaces/ranNaema/tiny-shakespeare-gpt](https://huggingface.co/spaces/ranNaema/tiny-shakespeare-gpt) (the source is in [`space/`](space/)).
+
 ## What is in here
 
 | Folder | What it is | Notes |
